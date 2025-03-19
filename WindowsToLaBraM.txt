@@ -1,0 +1,47 @@
+This is a draft to potentially be added to the readme file. This has been created seeing as in general
+windows computers might have an issue installing the relevant packages. Therefore this file will initially 
+describe the identified issues, and how they were fixed on our machines.
+
+It is urgent to emphasize, that these are based on hands on debugging, and therefore might not guarantee to fix the issues.
+As well as if you use either Linux or Macintosh systems, there should be little to no issues with running any and all of the python modules. 
+
+First Element: 
+
+There might be issues with using Python editions later than .11 and earlier than .8. 
+For this reason, it is recommended to immediately download and setup python 11, 
+as well as the virtual environment to run and store the relevant packages.
+
+Second Element:
+
+It might be necessary to have the relevant CSS build tools installed, if it is the case you are yet to have it installed, 
+you will get an error message regarding the module "Meson" that was not able to work due to a CSS issue, if this is the case, 
+it is recommended to install visual studio with the relevant CSS for desktop build tools (Or the individual packages that can probably looked up specificly)
+
+Third Element (And potentially most important):
+
+The download of necessary compilers. Whilst the first 2 you might be accustomed to, the last one is quite important, and is why the Windows computers seem to fail.
+The necessary compiler comes preinstalled on Linux and Macintosh, but does not come preinstalled on windows.
+
+The relevant compiler is called "Mingw" and can be found online, e.g. through: https://winlibs.com/
+
+the zip file of the compiler needs to be downloaded, and then stored somewhere. therafter the compiler needs to be added to your path.
+Seeing as this was my first time custom installing a compiler, I have decided to provide a quick guide.
+
+1. Install the zip file
+
+2. Unfold it on a drive, I recommend just C:
+
+3. Run (Windows + R) sysdm.cpl
+
+4. Go to 'Advanced' in the tabs
+
+5. Open Environment Variables
+
+6. Find 'Path' and press editions
+
+7. Add the folder '[path to Mingw]/bin'
+
+8. Restart computers
+
+This should add the compiler to your system.
+
