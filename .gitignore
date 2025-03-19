@@ -175,5 +175,8 @@ data/
 # Virtual Environments for idiots like bjoern
 venv311/
 
+# Chinese LaBraM model for EEG. This is purely for speculative work
+LaBraM-main/
+
 .DS_store
 

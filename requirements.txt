@@ -10,3 +10,13 @@ mne==1.9.0
 torch-scatter==2.1.8
 torch-eeg==1.1.3
 scipy==1.10.1
+timm==0.4.12
+Pillow
+blobfile
+mypy
+pytest
+requests
+einops
+deepspeed==0.4.0
+pyhealth==1.1.4
+h5py
