@@ -172,5 +172,5 @@ cython_debug/
 
 data/
 
-# Work Environment
-venv311/
+.DS_store
+
