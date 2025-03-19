@@ -172,5 +172,8 @@ cython_debug/
 
 data/
 
+# Virtual Environments for idiots like bjoern
+venv311/
+
 .DS_store
 
