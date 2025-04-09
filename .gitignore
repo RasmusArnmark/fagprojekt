@@ -174,3 +174,5 @@ data/
 models/
 
 .DS_store
+
+processed/
