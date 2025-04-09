@@ -173,3 +173,5 @@ cython_debug/
 data/
 
 .DS_store
+
+processed/
