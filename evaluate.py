@@ -1,21 +1,16 @@
-# main.py
-
 import torch
 import numpy as np
 import glob
 import os
-import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import mne
-import pickle
-import random
+import pandas as pd
 
-from torch import nn, optim
-from torch.utils.data import Dataset, DataLoader, Subset
+from torch.utils.data import Dataset, DataLoader
 from torcheeg.models import LaBraM
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.model_selection import train_test_split
 
 
 # ============================
@@ -50,67 +45,38 @@ print(f"Loaded labels tensor of shape {labels_data.shape}")
 # Load Electrode Names
 # ============================
 
-# Load one example file to get electrode names
-example_epochs = pd.read_pickle("data/FG_overview_df_v2.pkl")
 example_fif = glob.glob("data/*_FG_preprocessed-epo.fif")[0]
 epochs = mne.read_epochs(example_fif, preload=False)
 electrode_names = [ch.upper() for ch in epochs.info['ch_names']]
 
 # ============================
-# Create Dataset and Dataloaders
+# Create Dataset and Dataloader (Only Test Set)
 # ============================
 
 dataset = EEGDataset(eeg_data, labels_data)
-train_idx, test_idx = train_test_split(range(len(dataset)), test_size=0.2, stratify=labels_data, random_state=42)
-train_loader = DataLoader(Subset(dataset, train_idx), batch_size=16, shuffle=True)
-test_loader = DataLoader(Subset(dataset, test_idx), batch_size=16)
+_, test_idx = train_test_split(range(len(dataset)), test_size=0.2, stratify=labels_data, random_state=42)
+test_loader = DataLoader(torch.utils.data.Subset(dataset, test_idx), batch_size=16)
 
 # ============================
-# Model Initialization
+# Load Model and Pretrained Weights
 # ============================
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = LaBraM(in_channels=len(electrode_names), num_classes=2).to(device)
 
-# Load pretrained weights if available
-if os.path.exists("models/labram-base.pth"):
-    model.load_state_dict(torch.load("models/labram-base.pth"))
-    print("Loaded pretrained model.")
+model_path = "models/eeg_labram_model_1st_experiment_90.pth"
+if os.path.exists(model_path):
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    print(f"Loaded pretrained model from {model_path}")
+else:
+    raise FileNotFoundError(f"Model weights not found at {model_path}")
 
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
-
-# ============================
-# Training Loop
-# ============================
-
-num_epochs = 10
-train = True
-if train:
-    for epoch in range(num_epochs):
-        model.train()
-        running_loss = 0.0
-        for inputs, labels in train_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
-
-            optimizer.zero_grad()
-            outputs = model(inputs, electrodes=electrode_names)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-
-            running_loss += loss.item()
-
-        print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {running_loss / len(train_loader):.4f}")
-
-torch.save(model.state_dict(), "eeg_labram_model.pth")
-print("Training complete and model saved.")
+model.eval()
 
 # ============================
 # Evaluation
 # ============================
 
-model.eval()
 all_preds, all_trues = [], []
 
 with torch.no_grad():
@@ -127,7 +93,9 @@ with torch.no_grad():
 
 cm = confusion_matrix(all_trues, all_preds)
 plt.figure(figsize=(8, 6))
-sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=["No Feedback", "Feedback"], yticklabels=["No Feedback", "Feedback"])
+sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+            xticklabels=["No Feedback", "Feedback"],
+            yticklabels=["No Feedback", "Feedback"])
 plt.title("Confusion Matrix")
 plt.xlabel("Predicted")
 plt.ylabel("True")
@@ -135,4 +103,5 @@ plt.tight_layout()
 plt.show()
 
 print("Classification Report:")
-print(classification_report(all_trues, all_preds, target_names=["No Feedback", "Feedback"]))
+print(classification_report(all_trues, all_preds,
+                            target_names=["No Feedback", "Feedback"]))
