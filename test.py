@@ -16,6 +16,8 @@ def clean_channel_name(ch):
         ch = ch.replace("-REF", "")
     return ch
 
+
+
 cleaned_channel_names = [clean_channel_name(ch) for ch in channel_names]
 
 standard_10_20 = ['FP1', 'FP2', 'F3', 'F4', 'C3', 'C4',
@@ -107,7 +109,7 @@ import torch
 import numpy as np
 from sklearn.metrics import accuracy_score
 from torcheeg.models import LaBraM
-from tqdm import tqdm  # 👈 Progress bar!
+from tqdm import tqdm  
 
 weights = '/Users/philipkierkegaard/Desktop/sem4/fagprojekt/fagprojekt/labram-base.pth'
 
