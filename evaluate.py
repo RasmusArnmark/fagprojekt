@@ -102,6 +102,8 @@ plt.ylabel("True")
 plt.tight_layout()
 plt.show()
 
+plt.savefig("confusion_matrix.png")
+
 print("Classification Report:")
 print(classification_report(all_trues, all_preds,
                             target_names=["No Feedback", "Feedback"]))
