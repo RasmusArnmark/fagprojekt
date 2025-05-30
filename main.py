@@ -17,6 +17,43 @@ from torcheeg.models import LaBraM
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, classification_report
 
+# ============================
+# Dug real deep for this one
+# ============================
+
+def get_parameter_groups(model, base_lr, weight_decay, layer_decay):
+    parameter_group_names = {}
+    parameter_groups = []
+
+    num_layers = model.get_num_layers() if hasattr(model, "get_num_layers") else 12  # fallback
+    # Assign each parameter to a layer id
+    def get_layer_id_for_vit(var_name):
+        if var_name in ['cls_token', 'pos_embed']:
+            return 0
+        elif var_name.startswith('patch_embed'):
+            return 0
+        elif var_name.startswith('blocks'):
+            layer_id = int(var_name.split('.')[1])
+            return layer_id + 1
+        else:
+            return num_layers
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        group_name = "layer_%d" % get_layer_id_for_vit(name)
+        if group_name not in parameter_group_names:
+            scale = layer_decay ** (num_layers - get_layer_id_for_vit(name))
+            parameter_group_names[group_name] = {
+                "params": [],
+                "lr": base_lr * scale,
+                "weight_decay": weight_decay,
+            }
+        parameter_group_names[group_name]["params"].append(param)
+
+    for group_name in parameter_group_names:
+        parameter_groups.append(parameter_group_names[group_name])
+    return parameter_groups
 
 # ============================
 # Dataset Definition
@@ -73,7 +110,13 @@ test_loader = DataLoader(Subset(dataset, test_idx), batch_size=16)
 # ============================
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = LaBraM(in_channels=len(electrode_names), num_classes=2).to(device)
+drop_path = 0.1
+
+model = LaBraM(
+    in_channels=len(electrode_names),
+    num_classes=2,
+    drop_path=drop_path
+).to(device)
 
 # Ensure model directory exists
 model_dir = "models"
@@ -109,31 +152,34 @@ criterion = nn.CrossEntropyLoss(weight=c_e_l_weight, label_smoothing=c_e_l_smoot
 weight_decay = 0.05  # Recommended in LaBraM paper
 learning_rate = 0.001  # Or use the value you want
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+layer_decay = 0.65  # Recommended in LaBraM paper
+
+parameter_groups = get_parameter_groups(model, learning_rate, weight_decay, layer_decay)
+optimizer = torch.optim.AdamW(parameter_groups)
 
 # ============================
 # Training Loop
 # ============================
 
-# num_epochs = 10
-# train = True
-# if train:
-#     print("Starting training...")
-#     for epoch in range(num_epochs):
-#         model.train()
-#         running_loss = 0.0
-#         for inputs, labels in train_loader:
-#             inputs, labels = inputs.to(device), labels.to(device)
+num_epochs = 10
+train = True
+if train:
+    print("Starting training...")
+    for epoch in range(num_epochs):
+        model.train()
+        running_loss = 0.0
+        for inputs, labels in train_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
 
-#             optimizer.zero_grad()
-#             outputs = model(inputs, electrodes=electrode_names)
-#             loss = criterion(outputs, labels)
-#             loss.backward()
-#             optimizer.step()
+            optimizer.zero_grad()
+            outputs = model(inputs, electrodes=electrode_names)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
 
-#             running_loss += loss.item()
+            running_loss += loss.item()
 
-#         print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {running_loss / len(train_loader):.4f}")
+        print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {running_loss / len(train_loader):.4f}")
 
 #     # Save model
 #     torch.save(model.state_dict(), os.path.join(model_dir, "eeg_labram_model.pth"))
@@ -152,19 +198,19 @@ quick_batch_size = 8
 small_train_loader = DataLoader(Subset(dataset, list(train_idx)[:test_subset_size]), batch_size=quick_batch_size, shuffle=True)
 
 # Quick test training loop
-print("Starting quick test training loop...")
-for epoch in range(quick_num_epochs):
-    model.train()
-    running_loss = 0.0
-    for inputs, labels in small_train_loader:
-        inputs, labels = inputs.to(device), labels.to(device)
-        optimizer.zero_grad()
-        outputs = model(inputs, electrodes=electrode_names)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
-        running_loss += loss.item()
-    print(f"[Quick Test] Epoch {epoch + 1}/{quick_num_epochs}, Loss: {running_loss / len(small_train_loader):.4f}")
+# print("Starting quick test training loop...")
+# for epoch in range(quick_num_epochs):
+#     model.train()
+#     running_loss = 0.0
+#     for inputs, labels in small_train_loader:
+#         inputs, labels = inputs.to(device), labels.to(device)
+#         optimizer.zero_grad()
+#         outputs = model(inputs, electrodes=electrode_names)
+#         loss = criterion(outputs, labels)
+#         loss.backward()
+#         optimizer.step()
+#         running_loss += loss.item()
+#     print(f"[Quick Test] Epoch {epoch + 1}/{quick_num_epochs}, Loss: {running_loss / len(small_train_loader):.4f}")
 
 # Save model in a cross-platform way (optional for quick test)
 # torch.save(model.state_dict(), os.path.join(model_dir, "eeg_labram_model_quicktest.pth"))
@@ -172,8 +218,6 @@ for epoch in range(quick_num_epochs):
 
 # Print model hyperparameters after training
 warmup_epochs = 0  # To be implemented
-layer_decay = 0  # To be implemented
-drop_path = 0  # To be implemented
 seed = 0  # To be implemented
 
 TriosForLater = 0  # To be implemented
