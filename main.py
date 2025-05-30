@@ -98,8 +98,18 @@ if os.path.exists(pretrained_path):
     print("Loaded pretrained model (student weights).")
 
 
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+# ============================
+# Loss and Optimizer Initialization
+# ============================
+# CrossEntropyLoss for criterion
+c_e_l_weight = None
+c_e_l_smoothing = 0.0
+criterion = nn.CrossEntropyLoss(weight=c_e_l_weight, label_smoothing=c_e_l_smoothing)
+# AdamW for optimizer initialization
+weight_decay = 0.05  # Recommended in LaBraM paper
+learning_rate = 0.001  # Or use the value you want
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
 # ============================
 # Training Loop
@@ -125,18 +135,25 @@ optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 #         print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {running_loss / len(train_loader):.4f}")
 
-#     # Save model in a cross-platform way
+#     # Save model
 #     torch.save(model.state_dict(), os.path.join(model_dir, "eeg_labram_model.pth"))
 #     print("Training complete and model saved.")
 
 # ============================
-# Quick Test Training Loop, does not save a model. yet.
+# Quick Test Training (for debugging, comment out in production)
 # ============================
 
+# Defining hyperparameters
+quick_num_epochs = 4
 test_subset_size = 256
-small_train_loader = DataLoader(Subset(dataset, list(train_idx)[:test_subset_size]), batch_size=8, shuffle=True)
+quick_batch_size = 8
+
+# Creating dataset
+small_train_loader = DataLoader(Subset(dataset, list(train_idx)[:test_subset_size]), batch_size=quick_batch_size, shuffle=True)
+
+# Quick test training loop
 print("Starting quick test training loop...")
-for epoch in range(4):  # Only 4 epochs for speed
+for epoch in range(quick_num_epochs):
     model.train()
     running_loss = 0.0
     for inputs, labels in small_train_loader:
@@ -147,18 +164,39 @@ for epoch in range(4):  # Only 4 epochs for speed
         loss.backward()
         optimizer.step()
         running_loss += loss.item()
-    print(f"[Quick Test] Epoch {epoch + 1}/2, Loss: {running_loss / len(small_train_loader):.4f}")
-print("Quick test training loop complete.")
+    print(f"[Quick Test] Epoch {epoch + 1}/{quick_num_epochs}, Loss: {running_loss / len(small_train_loader):.4f}")
+
+# Save model in a cross-platform way (optional for quick test)
+# torch.save(model.state_dict(), os.path.join(model_dir, "eeg_labram_model_quicktest.pth"))
+# print("Quick test training complete and model saved.")
 
 # Print model hyperparameters after training
-print("\nModel Hyperparameters:")
+warmup_epochs = 0  # To be implemented
+layer_decay = 0  # To be implemented
+drop_path = 0  # To be implemented
+seed = 0  # To be implemented
+
+TriosForLater = 0  # To be implemented
+
+print("\nModel Information:")
 print(f"  Model: {model.__class__.__name__}")
-print(f"  Input channels: {model.in_channels if hasattr(model, 'in_channels') else len(electrode_names)}")
 print(f"  Number of classes: {model.num_classes if hasattr(model, 'num_classes') else 2}")
-print(f"  Learning rate: {optimizer.param_groups[0]['lr']}")
-print(f"  Batch size: {small_train_loader.batch_size}")
-print(f"  Epochs: 2")
+print(f"  Seed: {seed}")
 print(f"  Device: {device}")
+
+print("\nTraining Hyperparameters:")
+print(f"  CrossEntropyLoss weight: {c_e_l_weight}")
+print(f"  CrossEntropyLoss label smoothing: {c_e_l_smoothing}")
+print(f"  Learning rate: {optimizer.param_groups[0]['lr']}")
+print(f"  Weight decay: {weight_decay}")
+print(f"  Batch size: {small_train_loader.batch_size}")
+print(f"  Epochs: {quick_num_epochs}")
+print(f"  Warmup epochs: {warmup_epochs}")
+print(f"  Layer decay: {layer_decay}")
+print(f"  Drop path: {drop_path}")
+print(f" D_R_B: {TriosForLater}")
+print(f" A_P_E: {TriosForLater}")
+print(f" D_Q_B: {TriosForLater}")
 
 # ============================
 # Evaluation
