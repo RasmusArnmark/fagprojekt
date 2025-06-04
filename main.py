@@ -74,7 +74,7 @@ model = LaBraM(in_channels=len(electrode_names), num_classes=2).to(device)
 
 # Load pretrained weights if available
 if os.path.exists("models/labram-base.pth"):
-    model.load_state_dict(torch.load("models/labram-base.pth"))
+    model.load_state_dict(torch.load("models/labram-base.pth", map_location=device, weights_only=False))
     print("Loaded pretrained model.")
 
 criterion = nn.CrossEntropyLoss()
@@ -136,3 +136,4 @@ plt.show()
 
 print("Classification Report:")
 print(classification_report(all_trues, all_preds, target_names=["No Feedback", "Feedback"]))
+
