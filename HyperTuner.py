@@ -20,6 +20,8 @@ import mne
 import pickle
 import random
 import copy
+import optuna
+import wandb
 
 from torch import nn, optim
 from torch.utils.data import Dataset, DataLoader, Subset
@@ -90,28 +92,103 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 processed_dir = "processed" # From data.py, where the processed EEG and labels are stored
 model_dir = "models" # Where the model is saved.
 
-### Hyper Parameters
-hyperparameter_space = {
-    "base_learning_rate":    [1e-4, 5e-4, 1e-3],           # Initial learning rate for optimizer
-    "weight_decay":          [0.01, 0.05, 0.1],            # L2 regularization strength
-    "layer_decay":           [0.5, 0.65, 0.8],             # Layer-wise learning rate decay factor
-    "drop_path":             [0.05, 0.1, 0.2],             # Drop path (stochastic depth) rate for regularization
-    "batch_size":            [8, 16, 32],                  # Number of samples per training batch
-    "num_epochs":            [10],                         # Number of training epochs
-    "warmup_epochs":         [3, 5, 10],                   # Number of epochs for learning rate warmup
-    "scheduler_lr_min":      [1e-6, 1e-5],                 # Minimum learning rate at the end of cosine schedule
-    "scheduler_warmup_lr_init": [1e-6, 1e-5],              # Initial learning rate at the start of warmup
-    "cross_entropy_loss_smoothing": [0.0, 0.1],            # Label smoothing for cross-entropy loss
-    "disable_relative_positive_bias": [False, True],       # Disable relative positional bias in the model
-    "absolute_positive_embedding": [False, True],          # Use absolute positional embedding in the model
-    "disable_qkv_bias": [False],                           # Disable bias in QKV projections (attention)
-    "test_size": [0.2],                                    # Fraction of data used for testing
-    "cross_entropy_loss_weight": [None],                   # Class weights for cross-entropy loss (None = no weighting)
-    "scheduler_cycle_limit": [1],                          # Number of cosine cycles (1 = no restart)
-}
-
 ### Trials
 n_trials = 30
+
+### Hyper Parameters
+# hyperparameter_space = {
+#     "base_learning_rate":    [1e-4, 5e-4, 1e-3],           # Initial learning rate for optimizer
+#     "weight_decay":          [0.01, 0.05, 0.1],            # L2 regularization strength
+#     "layer_decay":           [0.5, 0.65, 0.8],             # Layer-wise learning rate decay factor
+#     "drop_path":             [0.05, 0.1, 0.2],             # Drop path (stochastic depth) rate for regularization
+#     "batch_size":            [8, 16, 32],                  # Number of samples per training batch
+#     "num_epochs":            [10],                         # Number of training epochs
+#     "warmup_epochs":         [3, 5, 10],                   # Number of epochs for learning rate warmup
+#     "scheduler_lr_min":      [1e-6, 1e-5],                 # Minimum learning rate at the end of cosine schedule
+#     "scheduler_warmup_lr_init": [1e-6, 1e-5],              # Initial learning rate at the start of warmup
+#     "cross_entropy_loss_smoothing": [0.0, 0.1],            # Label smoothing for cross-entropy loss
+#     "disable_relative_positive_bias": [False, True],       # Disable relative positional bias in the model
+#     "absolute_positive_embedding": [False, True],          # Use absolute positional embedding in the model
+#     "disable_qkv_bias": [False],                           # Disable bias in QKV projections (attention)
+#     "test_size": [0.2],                                    # Fraction of data used for testing
+#     "cross_entropy_loss_weight": [None],                   # Class weights for cross-entropy loss (None = no weighting)
+#     "scheduler_cycle_limit": [1],                          # Number of cosine cycles (1 = no restart)
+# }
+
+### WandB config
+sweep_config = {
+    "method": "bayes",
+    "metric": {
+        "name": "avg_loss",   # or "f1_score" if you want to maximize F1
+        "goal": "minimize"
+    },
+    "parameters": {
+        "base_learning_rate": {
+            "min": 1e-5,
+            "max": 1e-2,
+            "distribution": "log_uniform"
+        },
+        "weight_decay": {
+            "min": 0.001,
+            "max": 0.1,
+            "distribution": "uniform"
+        },
+        "layer_decay": {
+            "min": 0.5,
+            "max": 0.9,
+            "distribution": "uniform"
+        },
+        "drop_path": {
+            "min": 0.01,
+            "max": 0.3,
+            "distribution": "uniform"
+        },
+        "batch_size": {
+            "values": [8, 16, 32]
+        },
+        "num_epochs": {
+            "value": 10
+        },
+        "warmup_epochs": {
+            "min": 2,
+            "max": 10,
+            "distribution": "int_uniform"
+        },
+        "scheduler_lr_min": {
+            "min": 1e-6,
+            "max": 1e-4,
+            "distribution": "log_uniform"
+        },
+        "scheduler_warmup_lr_init": {
+            "min": 1e-6,
+            "max": 1e-4,
+            "distribution": "log_uniform"
+        },
+        "cross_entropy_loss_smoothing": {
+            "min": 0.0,
+            "max": 0.2,
+            "distribution": "uniform"
+        },
+        "disable_relative_positive_bias": {
+            "values": [False, True]
+        },
+        "absolute_positive_embedding": {
+            "values": [False, True]
+        },
+        "disable_qkv_bias": {
+            "values": [False]
+        },
+        "test_size": {
+            "value": 0.2
+        },
+        "cross_entropy_loss_weight": {
+            "value": None
+        },
+        "scheduler_cycle_limit": {
+            "value": 1
+        }
+    }
+}
 
 # ================================ #
 # Training and Evaluation Function #
@@ -120,11 +197,25 @@ n_trials = 30
 # More or less copied from the main document
 # For any changes in the main, this should be updated as well.
 
-def train_and_evaluate(params, seed=42, device=None):
-    """
-    Train and evaluate the model with a given set of hyperparameters.
-    Returns the weighted F1-score on the test set.
-    """
+def train_and_evaluate(seed=42, device=None):
+    config = wandb.config
+    base_learning_rate = config.base_learning_rate
+    weight_decay = config.weight_decay
+    layer_decay = config.layer_decay
+    drop_path = config.drop_path
+    batch_size = config.batch_size
+    num_epochs = config.num_epochs
+    warmup_epochs = config.warmup_epochs
+    scheduler_lr_min = config.scheduler_lr_min
+    scheduler_warmup_lr_init = config.scheduler_warmup_lr_init
+    cross_entropy_loss_smoothing = config.cross_entropy_loss_smoothing
+    disable_relative_positive_bias = config.disable_relative_positive_bias
+    absolute_positive_embedding = config.absolute_positive_embedding
+    disable_qkv_bias = config.disable_qkv_bias
+    test_size = config.test_size
+    cross_entropy_loss_weight = config.cross_entropy_loss_weight
+    scheduler_cycle_limit = config.scheduler_cycle_limit
+
     # Set seeds for reproducibility
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -136,24 +227,6 @@ def train_and_evaluate(params, seed=42, device=None):
 
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Unpack hyperparameters
-    base_learning_rate = params["base_learning_rate"]
-    weight_decay = params["weight_decay"]
-    layer_decay = params["layer_decay"]
-    drop_path = params["drop_path"]
-    batch_size = params["batch_size"]
-    num_epochs = params["num_epochs"]
-    warmup_epochs = params["warmup_epochs"]
-    scheduler_lr_min = params["scheduler_lr_min"]
-    scheduler_warmup_lr_init = params["scheduler_warmup_lr_init"]
-    cross_entropy_loss_smoothing = params["cross_entropy_loss_smoothing"]
-    disable_relative_positive_bias = params["disable_relative_positive_bias"]
-    absolute_positive_embedding = params["absolute_positive_embedding"]
-    disable_qkv_bias = params["disable_qkv_bias"]
-    test_size = params["test_size"]
-    cross_entropy_loss_weight = params["cross_entropy_loss_weight"]
-    scheduler_cycle_limit = params["scheduler_cycle_limit"]
 
     # Reload data (to avoid data leakage between trials)
     eeg_dir = os.path.join(processed_dir, "eeg_chunk")
@@ -263,66 +336,41 @@ def train_and_evaluate(params, seed=42, device=None):
 # Hyperparameter Tuning #
 # ===================== #
 
-print(f" === Starting Hyperparameter Search ===")
-print(f"Shuffling all combinations of hyperparameter space")
+def main():
 
-# Generate all possible combinations (cartesian product)
-all_combinations = list(product(*hyperparameter_space.values()))
-random.seed(lucky_number)
-random.shuffle(all_combinations)  # Shuffle for random search
+    # Set Directory for this shit
+    HyperParameter_dir = "HyperParameter"
+    if not os.path.exists(HyperParameter_dir):
+        os.makedirs(HyperParameter_dir)
+        print(f"folder created: {HyperParameter_dir}")
 
-# Limit to n_trials
-search_combinations = all_combinations[:n_trials]
-
-best_f1 = -1
-best_params = None
-
-# Store all results for later analysis
-results = []
-
-for trial, combo in enumerate(search_combinations):
-    # Map combo to parameter names
-    params = dict(zip(hyperparameter_space.keys(), combo))
-    print(f"\n=== Trial {trial+1}/{n_trials} ===")
+    # Initialize wandb for this run (wandb will inject the config)
+    wandb.init(project="labram-hyperparameter-tuning")
+    print("\n=== New Trial ===")
     print("Testing hyperparameters:")
-    for k, v in params.items():
+    for k, v in dict(wandb.config).items():
         print(f"  {k}: {v}")
 
-    print(f"Initializing model, training and evaluation...")
-    # Run training and evaluation
-    f1 = train_and_evaluate(params, seed=lucky_number, device=device)
+    print("Initializing model, training and evaluation...")
+    f1 = train_and_evaluate(seed=lucky_number, device=device)
 
-    print(f"Trial {trial+1} F1-score: {f1:.4f}")
+    print(f"Trial F1-score: {f1:.4f}")
+    wandb.log({"avg_loss": avg_loss, "f1_score": f1})
 
-    # Save results for analysis
-    trial_result = copy.deepcopy(params)
-    trial_result["f1_score"] = f1
-    results.append(trial_result)
+    # Optionally, log other metrics or artifacts here
+    wandb.save(HyperParameter_dir)
 
-    if f1 > best_f1:
-        best_f1 = f1
-        best_params = copy.deepcopy(params)
+    # Save results to CSV (optional, for local backup)
+    csv_path = os.path.join(HyperParameter_dir, "hyperparameter_search_results.csv")
+    # Append or create the CSV
+    results_df = pd.DataFrame([{**dict(wandb.config), "f1_score": f1}])
+    if os.path.exists(csv_path):
+        results_df.to_csv(csv_path, mode='a', header=False, index=False)
+    else:
+        results_df.to_csv(csv_path, index=False)
 
-# Save all results to a CSV file for later plotting/analysis
-results_df = pd.DataFrame(results)
-results_df.to_csv("hyperparameter_search_results.csv", index=False)
+    print(f"Results saved to {csv_path}")
 
-print("\n=== Hyperparameter Search Complete ===")
-print("Best F1-score:", best_f1)
-print("Best hyperparameters:")
-for k, v in best_params.items():
-    print(f"  {k}: {v}")
-print("All results saved to hyperparameter_search_results.csv")
-
-# Load results
-# Det her virker ikke rigtigt endnu, så vi kigger på at plotte det senere.
-# df = pd.read_csv("hyperparameter_search_results.csv")
-
-# # Optionally, select only numeric columns and F1-score for plotting
-# cols_to_plot = [col for col in df.columns if df[col].dtype != 'O' or col == 'f1_score']
-
-# plt.figure(figsize=(12, 6))
-# parallel_coordinates(df[cols_to_plot], class_column='f1_score', colormap=plt.get_cmap("viridis"))
-# plt.title("Parallel Coordinates Plot of Hyperparameter Search")
-# plt.ylabel("Hyperparameter Value / F1-score")
-# plt.show()
+if __name__ == "__main__":
+    sweep_id = wandb.sweep(sweep_config, project="labram-hyperparameter-tuning")
+    wandb.agent(sweep_id, function=main)
