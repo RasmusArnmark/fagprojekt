@@ -330,7 +330,7 @@ def train_and_evaluate(seed=42, device=None):
     # Compute weighted F1-score
     f1 = f1_score(all_trues, all_preds, average='weighted')
     print(f"  -> Finished evaluating. Weighted F1-score on test set: {f1:.4f}")
-    return f1
+    return f1, avg_loss  # <-- Return both
 
 # ===================== #
 # Hyperparameter Tuning #
@@ -352,7 +352,7 @@ def main():
         print(f"  {k}: {v}")
 
     print("Initializing model, training and evaluation...")
-    f1 = train_and_evaluate(seed=lucky_number, device=device)
+    f1, avg_loss = train_and_evaluate(seed=lucky_number, device=device)
 
     print(f"Trial F1-score: {f1:.4f}")
     wandb.log({"avg_loss": avg_loss, "f1_score": f1})
