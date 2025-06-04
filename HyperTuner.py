@@ -20,7 +20,6 @@ import mne
 import pickle
 import random
 import copy
-import optuna
 import wandb
 
 from torch import nn, optim
@@ -95,26 +94,6 @@ model_dir = "models" # Where the model is saved.
 ### Trials
 n_trials = 30
 
-### Hyper Parameters
-# hyperparameter_space = {
-#     "base_learning_rate":    [1e-4, 5e-4, 1e-3],           # Initial learning rate for optimizer
-#     "weight_decay":          [0.01, 0.05, 0.1],            # L2 regularization strength
-#     "layer_decay":           [0.5, 0.65, 0.8],             # Layer-wise learning rate decay factor
-#     "drop_path":             [0.05, 0.1, 0.2],             # Drop path (stochastic depth) rate for regularization
-#     "batch_size":            [8, 16, 32],                  # Number of samples per training batch
-#     "num_epochs":            [10],                         # Number of training epochs
-#     "warmup_epochs":         [3, 5, 10],                   # Number of epochs for learning rate warmup
-#     "scheduler_lr_min":      [1e-6, 1e-5],                 # Minimum learning rate at the end of cosine schedule
-#     "scheduler_warmup_lr_init": [1e-6, 1e-5],              # Initial learning rate at the start of warmup
-#     "cross_entropy_loss_smoothing": [0.0, 0.1],            # Label smoothing for cross-entropy loss
-#     "disable_relative_positive_bias": [False, True],       # Disable relative positional bias in the model
-#     "absolute_positive_embedding": [False, True],          # Use absolute positional embedding in the model
-#     "disable_qkv_bias": [False],                           # Disable bias in QKV projections (attention)
-#     "test_size": [0.2],                                    # Fraction of data used for testing
-#     "cross_entropy_loss_weight": [None],                   # Class weights for cross-entropy loss (None = no weighting)
-#     "scheduler_cycle_limit": [1],                          # Number of cosine cycles (1 = no restart)
-# }
-
 ### WandB config
 sweep_config = {
     "method": "bayes",
@@ -156,12 +135,12 @@ sweep_config = {
         },
         "scheduler_lr_min": {
             "min": 1e-6,
-            "max": 1e-4,
+            "max": 1e-3,
             "distribution": "log_uniform"
         },
         "scheduler_warmup_lr_init": {
             "min": 1e-6,
-            "max": 1e-4,
+            "max": 1e-3,
             "distribution": "log_uniform"
         },
         "cross_entropy_loss_smoothing": {
@@ -251,13 +230,10 @@ def train_and_evaluate(seed=42, device=None):
         random_state=seed
     )
 
-    # After train/test split
-    max_points = 100  # or any small number for quick testing
-    if len(train_idx) > max_points:
-        train_idx = train_idx[:max_points]
-
     train_loader = DataLoader(Subset(dataset, train_idx), batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(Subset(dataset, test_idx), batch_size=batch_size)
+
+    print(f"Data Sorted")
 
     # Model
     model = LaBraM(
@@ -298,8 +274,11 @@ def train_and_evaluate(seed=42, device=None):
         t_in_epochs=True,
     )
 
+    print(f"Model initialized")
+
     # Training Loop
     for epoch in range(num_epochs):
+        print(f"Starting epoch {epoch + 1}/{num_epochs}...")
         scheduler.step(epoch)
         model.train()
         running_loss = 0.0
@@ -330,47 +309,53 @@ def train_and_evaluate(seed=42, device=None):
     # Compute weighted F1-score
     f1 = f1_score(all_trues, all_preds, average='weighted')
     print(f"  -> Finished evaluating. Weighted F1-score on test set: {f1:.4f}")
-    return f1, avg_loss  # <-- Return both
+    return f1, avg_loss, model
 
 # ===================== #
 # Hyperparameter Tuning #
 # ===================== #
 
 def main():
-
-    # Set Directory for this shit
     HyperParameter_dir = "HyperParameter"
     if not os.path.exists(HyperParameter_dir):
         os.makedirs(HyperParameter_dir)
         print(f"folder created: {HyperParameter_dir}")
 
-    # Initialize wandb for this run (wandb will inject the config)
+    # Initialize wandb for this run (add entity if needed)
     wandb.init(project="labram-hyperparameter-tuning")
-    print("\n=== New Trial ===")
-    print("Testing hyperparameters:")
-    for k, v in dict(wandb.config).items():
-        print(f"  {k}: {v}")
+    try:
+        print("\n=== New Trial ===")
+        print("Testing hyperparameters:")
+        for k, v in dict(wandb.config).items():
+            print(f"  {k}: {v}")
 
-    print("Initializing model, training and evaluation...")
-    f1, avg_loss = train_and_evaluate(seed=lucky_number, device=device)
+        print("Initializing model, training and evaluation...")
+        f1, avg_loss, model = train_and_evaluate(seed=lucky_number, device=device)
 
-    print(f"Trial F1-score: {f1:.4f}")
-    wandb.log({"avg_loss": avg_loss, "f1_score": f1})
+        print(f"Trial F1-score: {f1:.4f}")
+        wandb.log({"avg_loss": avg_loss, "f1_score": f1})
 
-    # Optionally, log other metrics or artifacts here
-    wandb.save(HyperParameter_dir)
+        # Save model in the wandb run directory
+        model_path = os.path.join(wandb.run.dir, "model.pth")
+        torch.save(model.state_dict(), model_path)
+        wandb.save(model_path)
 
-    # Save results to CSV (optional, for local backup)
-    csv_path = os.path.join(HyperParameter_dir, "hyperparameter_search_results.csv")
-    # Append or create the CSV
-    results_df = pd.DataFrame([{**dict(wandb.config), "f1_score": f1}])
-    if os.path.exists(csv_path):
-        results_df.to_csv(csv_path, mode='a', header=False, index=False)
-    else:
-        results_df.to_csv(csv_path, index=False)
+        # Save results to CSV (optional, for local backup)
+        csv_path = os.path.join(HyperParameter_dir, "hyperparameter_search_results.csv")
+        results_df = pd.DataFrame([{**dict(wandb.config), "f1_score": f1, "avg_loss": avg_loss}])
+        if os.path.exists(csv_path):
+            results_df.to_csv(csv_path, mode='a', header=False, index=False)
+        else:
+            results_df.to_csv(csv_path, index=False)
 
-    print(f"Results saved to {csv_path}")
+        print(f"Results saved to {csv_path}")
+    except Exception as e:
+        print(f"Run failed: {e}")
+        wandb.alert(title="Run failed", text=str(e))
+    finally:
+        wandb.finish()
 
 if __name__ == "__main__":
     sweep_id = wandb.sweep(sweep_config, project="labram-hyperparameter-tuning")
+    print(f"Sweep ID: {sweep_id}")
     wandb.agent(sweep_id, function=main)

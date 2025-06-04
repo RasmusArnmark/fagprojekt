@@ -16,6 +16,7 @@ from torch.utils.data import Dataset, DataLoader, Subset
 from torcheeg.models import LaBraM
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, classification_report
+from timm.scheduler import CosineLRScheduler
 
 # ============================
 # Dug real deep for this one
@@ -69,6 +70,59 @@ class EEGDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.eeg_data[idx], self.labels[idx]
+    
+
+# ============================
+# Hyperparameters
+# ============================
+
+use_fixed_constants = True
+
+if use_fixed_constants == True:
+    ### Constant
+    base_learning_rate = 1e-3
+    weight_decay = 0.05
+    layer_decay = 0.65
+    drop_path =  0.1
+    batch_size = 12
+    num_epochs = 20
+    warmup_epochs = 5
+    scheduler_lr_min =  1e-6
+    scheduler_warmup_lr_init =  1e-6
+    cross_entropy_loss_smoothing = 0.1
+    disable_relative_positive_bias =  False
+    absolute_positive_embedding =  True
+    disable_qkv_bias =   False
+    test_size =  0.2
+    cross_entropy_loss_weight =  None
+    scheduler_cycle_limit =  1
+    print("Using fixed constants for hyperparameters.")
+    print("Consider using HyperTuner.py to improve results.")
+else:
+    ### From File (Use HyperTuner.py)
+    csv_path = os.path.join("HyperParameter", "hyperparameter_search_results.csv")
+    hyper_df = pd.read_csv(csv_path)
+
+    # Find the row with the best F1 score
+    best_row = hyper_df.loc[hyper_df['f1_score'].idxmax()]
+
+    # Set each hyperparameter individually (cast to correct type as needed)
+    base_learning_rate = float(best_row['base_learning_rate'])
+    weight_decay = float(best_row['weight_decay'])
+    layer_decay = float(best_row['layer_decay'])
+    drop_path = float(best_row['drop_path'])
+    batch_size = int(best_row['batch_size'])
+    num_epochs = int(best_row['num_epochs'])
+    warmup_epochs = int(best_row['warmup_epochs'])
+    scheduler_lr_min = float(best_row['scheduler_lr_min'])
+    scheduler_warmup_lr_init = float(best_row['scheduler_warmup_lr_init'])
+    cross_entropy_loss_smoothing = float(best_row['cross_entropy_loss_smoothing'])
+    disable_relative_positive_bias = bool(best_row['disable_relative_positive_bias'])
+    absolute_positive_embedding = bool(best_row['absolute_positive_embedding'])
+    disable_qkv_bias = bool(best_row['disable_qkv_bias'])
+    test_size = float(best_row['test_size'])
+    cross_entropy_loss_weight = None if pd.isna(best_row['cross_entropy_loss_weight']) else float(best_row['cross_entropy_loss_weight'])
+    scheduler_cycle_limit = int(best_row['scheduler_cycle_limit'])
 
 # ============================
 # Load Preprocessed Data
@@ -144,28 +198,32 @@ if os.path.exists(pretrained_path):
 # ============================
 # Loss and Optimizer Initialization
 # ============================
+
 # CrossEntropyLoss for criterion
-c_e_l_weight = None
-c_e_l_smoothing = 0.0
-criterion = nn.CrossEntropyLoss(weight=c_e_l_weight, label_smoothing=c_e_l_smoothing)
+criterion = nn.CrossEntropyLoss(weight=cross_entropy_loss_weight, label_smoothing=cross_entropy_loss_smoothing)
+
 # AdamW for optimizer initialization
-weight_decay = 0.05  # Recommended in LaBraM paper
-learning_rate = 0.001  # Or use the value you want
-
-layer_decay = 0.65  # Recommended in LaBraM paper
-
-parameter_groups = get_parameter_groups(model, learning_rate, weight_decay, layer_decay)
+parameter_groups = get_parameter_groups(model, base_learning_rate, weight_decay, layer_decay)
 optimizer = torch.optim.AdamW(parameter_groups)
+scheduler = CosineLRScheduler(
+    optimizer,
+    t_initial=num_epochs,
+    lr_min=1e-6,                # You can adjust this or make it a variable
+    warmup_lr_init=1e-5,        # You can adjust this or make it a variable
+    warmup_t=2,                 # Number of warmup epochs, adjust as needed
+    cycle_limit=1,              # Number of cycles
+    t_in_epochs=True,
+)
 
 # ============================
 # Training Loop
 # ============================
 
-num_epochs = 10
 train = True
 if train:
     print("Starting training...")
     for epoch in range(num_epochs):
+        scheduler.step(epoch)
         model.train()
         running_loss = 0.0
         for inputs, labels in train_loader:
@@ -184,63 +242,6 @@ if train:
 #     # Save model
 #     torch.save(model.state_dict(), os.path.join(model_dir, "eeg_labram_model.pth"))
 #     print("Training complete and model saved.")
-
-# ============================
-# Quick Test Training (for debugging, comment out in production)
-# ============================
-
-# Defining hyperparameters
-quick_num_epochs = 4
-test_subset_size = 256
-quick_batch_size = 8
-
-# Creating dataset
-small_train_loader = DataLoader(Subset(dataset, list(train_idx)[:test_subset_size]), batch_size=quick_batch_size, shuffle=True)
-
-# Quick test training loop
-# print("Starting quick test training loop...")
-# for epoch in range(quick_num_epochs):
-#     model.train()
-#     running_loss = 0.0
-#     for inputs, labels in small_train_loader:
-#         inputs, labels = inputs.to(device), labels.to(device)
-#         optimizer.zero_grad()
-#         outputs = model(inputs, electrodes=electrode_names)
-#         loss = criterion(outputs, labels)
-#         loss.backward()
-#         optimizer.step()
-#         running_loss += loss.item()
-#     print(f"[Quick Test] Epoch {epoch + 1}/{quick_num_epochs}, Loss: {running_loss / len(small_train_loader):.4f}")
-
-# Save model in a cross-platform way (optional for quick test)
-# torch.save(model.state_dict(), os.path.join(model_dir, "eeg_labram_model_quicktest.pth"))
-# print("Quick test training complete and model saved.")
-
-# Print model hyperparameters after training
-warmup_epochs = 0  # To be implemented
-seed = 0  # To be implemented
-
-TriosForLater = 0  # To be implemented
-
-print("\nModel Information:")
-print(f"  Model: {model.__class__.__name__}")
-print(f"  Number of classes: {model.num_classes if hasattr(model, 'num_classes') else 2}")
-print(f"  Seed: {seed}")
-print(f"  Device: {device}")
-
-print("\nTraining Hyperparameters:")
-print(f"  CrossEntropyLoss weight: {c_e_l_weight}")
-print(f"  CrossEntropyLoss label smoothing: {c_e_l_smoothing}")
-print(f"  Learning rate: {optimizer.param_groups[0]['lr']}")
-print(f"  Weight decay: {weight_decay}")
-print(f"  Batch size: {small_train_loader.batch_size}")
-print(f"  Epochs: {quick_num_epochs}")
-print(f"  Warmup epochs: {warmup_epochs}")
-print(f"  Layer decay: {layer_decay}")
-print(f"  Drop path: {drop_path}")
-print(f" D_R_B: {TriosForLater}")
-print(f" A_P_E: {TriosForLater}")
-print(f" D_Q_B: {TriosForLater}")
 
 # ============================
 # Evaluation
@@ -274,5 +275,3 @@ plt.show()
 
 print("Classification Report:")
 print(classification_report(all_trues, all_preds, target_names=["No Feedback", "Feedback"]))
-
-
