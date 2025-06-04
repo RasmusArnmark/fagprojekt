@@ -175,3 +175,10 @@ data/
 .DS_store
 
 processed/
+
+models/labram-base.pth
+models/social_feedback_model.pth
+processed2/
+*.pt
+processed/
+processed2/
