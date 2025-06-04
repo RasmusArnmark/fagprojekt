@@ -122,14 +122,17 @@ def strip_student_prefix(state_dict):
     return new_state_dict
 
 # 1. Load model
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 electrode_names = ['FP1', 'FP2', 'F3', 'F4', 'C3', 'C4', 'P3', 'P4',
                    'O1', 'O2', 'F7', 'F8', 'T3', 'T4', 'T5', 'T6',
                    'A1', 'A2', 'FZ', 'CZ', 'PZ', 'T1', 'T2']
 
-model = LaBraM.base_patch200_200(in_channels=23, num_classes=2).to(device)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = LaBraM(num_eeg_channels=23, num_classes=2).to(device)
 checkpoint = torch.load(weights, map_location=device, weights_only=False)
+
 stripped_weights = strip_student_prefix(checkpoint["model"])
+
 model.load_state_dict(stripped_weights, strict=False)
 model.eval()
 
