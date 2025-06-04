@@ -1,5 +1,6 @@
 # main.py
 
+
 import torch
 import numpy as np
 import glob
@@ -74,8 +75,13 @@ model = LaBraM(in_channels=len(electrode_names), num_classes=2).to(device)
 
 # Load pretrained weights if available
 if os.path.exists("models/labram-base.pth"):
-    model.load_state_dict(torch.load("models/labram-base.pth"))
-    print("Loaded pretrained model.")
+    checkpoint = torch.load("models/labram-base.pth", map_location=device, weights_only=False)
+    print(type(checkpoint))
+    #print(f'checkpoint: {checkpoint}')
+
+    model.load_state_dict(checkpoint["model"])
+
+    print("Model weights loaded successfully.")
 
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
