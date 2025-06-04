@@ -1,6 +1,5 @@
 # main.py
 
-
 import torch
 import numpy as np
 import glob
@@ -74,21 +73,31 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = LaBraM(in_channels=len(electrode_names), num_classes=2).to(device)
 
 # Load pretrained weights if available
-if os.path.exists("models/labram-base.pth"):
-    checkpoint = torch.load("models/labram-base.pth", map_location=device, weights_only=False)
-    print(type(checkpoint))
-    #print(f'checkpoint: {checkpoint}')
+checkpoint = torch.load('models/labram-base.pth', map_location=device, weights_only=False)
+print(f"found this: {checkpoint.keys()}")
+state_dict = checkpoint["model"]
 
-    model.load_state_dict(checkpoint["model"])
+# Remove 'student.' prefix from all keys if present
+new_state_dict = {}
+for k, v in state_dict.items():
+    if k.startswith("student."):
+        new_state_dict[k[len("student."):]] = v
+    else:
+        new_state_dict[k] = v
 
-    print("Model weights loaded successfully.")
+model.load_state_dict(new_state_dict, strict=False)
+print("Loaded pretrained model (student weights).")
+
 
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
+
 # ============================
 # Training Loop
 # ============================
+
+print('Starts training...')
 
 num_epochs = 10
 train = True
@@ -96,7 +105,8 @@ if train:
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
-        for inputs, labels in train_loader:
+        for i, (inputs, labels) in enumerate(train_loader):
+
             inputs, labels = inputs.to(device), labels.to(device)
 
             optimizer.zero_grad()
@@ -104,9 +114,10 @@ if train:
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
-
+            
             running_loss += loss.item()
-
+            if i % 10 == 0:
+                print(f'Epoch {epoch}, Loss: {loss}')
         print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {running_loss / len(train_loader):.4f}")
 
 torch.save(model.state_dict(), "eeg_labram_model.pth")
