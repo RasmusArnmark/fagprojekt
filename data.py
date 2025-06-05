@@ -10,9 +10,9 @@ import torch
 
 ### Edit these paths to point to your data directories ###
 # Load metadata DataFrame
-df_info = pd.read_pickle("data\FG_Data_For_Students\FG_Data_For_Students\FG_overview_df_v2.pkl")
+df_info = pd.read_pickle(os.path.join("data", "FG_Data_For_Students", "FG_Data_For_Students", "FG_overview_df_v2.pkl"))
 # Define data directory / Pointer
-file_paths = glob.glob("data\PreprocessedEEGData\*_FG_preprocessed-epo.fif")
+file_paths = glob.glob(os.path.join("data", "PreprocessedEEGData", "*_FG_preprocessed-epo.fif"))
 print(f"Found {len(file_paths)} EEG files.")
 ### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
 
