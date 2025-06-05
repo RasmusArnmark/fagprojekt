@@ -17,6 +17,45 @@ from torcheeg.models import LaBraM
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, classification_report
 
+LaBraM.load_state_dict()
+
+# ============================
+# Dug real deep for this one
+# ============================
+
+def get_parameter_groups(model, base_lr, weight_decay, layer_decay):
+    parameter_group_names = {}
+    parameter_groups = []
+
+    num_layers = model.get_num_layers() if hasattr(model, "get_num_layers") else 12  # fallback
+    # Assign each parameter to a layer id
+    def get_layer_id_for_vit(var_name):
+        if var_name in ['cls_token', 'pos_embed']:
+            return 0
+        elif var_name.startswith('patch_embed'):
+            return 0
+        elif var_name.startswith('blocks'):
+            layer_id = int(var_name.split('.')[1])
+            return layer_id + 1
+        else:
+            return num_layers
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        group_name = "layer_%d" % get_layer_id_for_vit(name)
+        if group_name not in parameter_group_names:
+            scale = layer_decay ** (num_layers - get_layer_id_for_vit(name))
+            parameter_group_names[group_name] = {
+                "params": [],
+                "lr": base_lr * scale,
+                "weight_decay": weight_decay,
+            }
+        parameter_group_names[group_name]["params"].append(param)
+
+    for group_name in parameter_group_names:
+        parameter_groups.append(parameter_group_names[group_name])
+    return parameter_groups
 
 # ============================
 # Dataset Definition
@@ -37,8 +76,12 @@ class EEGDataset(Dataset):
 # Load Preprocessed Data
 # ============================
 
-eeg_files = sorted(glob.glob("processed/eeg_chunk_*.pt"))
-label_files = sorted(glob.glob("processed/labels_chunk_*.pt"))
+
+
+eeg_files = sorted(glob.glob(os.path.join("processed", "eeg_chunk_*.pt")))
+label_files = sorted(glob.glob(os.path.join("processed", "labels_chunk_*.pt")))
+
+print(f'eeg_files: {eeg_files}')
 
 eeg_data = torch.cat([torch.load(f) for f in eeg_files], dim=0)
 labels_data = torch.cat([torch.load(f) for f in label_files], dim=0)
@@ -50,9 +93,8 @@ print(f"Loaded labels tensor of shape {labels_data.shape}")
 # Load Electrode Names
 # ============================
 
-# Load one example file to get electrode names
-example_epochs = pd.read_pickle("data/FG_overview_df_v2.pkl")
-example_fif = glob.glob("data/*_FG_preprocessed-epo.fif")[0]
+data_dir = os.path.join("data", "PreprocessedEEGData")
+example_fif = "data/301A_FG_preprocessed-epo.fif"
 epochs = mne.read_epochs(example_fif, preload=False)
 electrode_names = [ch.upper() for ch in epochs.info['ch_names']]
 
@@ -70,43 +112,66 @@ test_loader = DataLoader(Subset(dataset, test_idx), batch_size=16)
 # ============================
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = LaBraM(in_channels=len(electrode_names), num_classes=2).to(device)
+drop_path = 0.1
+
+model = LaBraM(
+    in_channels=len(electrode_names),
+    num_classes=2,
+    drop_path=drop_path
+).to(device)
+
+# Ensure model directory exists
+model_dir = "models"
+os.makedirs(model_dir, exist_ok=True)
 
 # Load pretrained weights if available
-checkpoint = torch.load('models/labram-base.pth', map_location=device, weights_only=False)
-print(f"found this: {checkpoint.keys()}")
-state_dict = checkpoint["model"]
-
-# Remove 'student.' prefix from all keys if present
-new_state_dict = {}
-for k, v in state_dict.items():
-    if k.startswith("student."):
-        new_state_dict[k[len("student."):]] = v
-    else:
-        new_state_dict[k] = v
-
-model.load_state_dict(new_state_dict, strict=False)
-print("Loaded pretrained model (student weights).")
+pretrained_path = os.path.join(model_dir, "labram-base.pth")
+if os.path.exists(pretrained_path):
+    checkpoint = torch.load(pretrained_path, map_location=device, weights_only=False)
+    print(f"found this: {checkpoint.keys()}")
+    state_dict = checkpoint["model"]
 
 
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+    # Remove 'student.' prefix from all keys if present
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith("student."):
+            new_state_dict[k[len("student."):]] = v
+        else:
+            new_state_dict[k] = v
 
+    model.load_state_dict(new_state_dict, strict=False)
+    print("Loaded pretrained model (student weights).")
+
+
+# ============================
+# Loss and Optimizer Initialization
+# ============================
+# CrossEntropyLoss for criterion
+c_e_l_weight = None
+c_e_l_smoothing = 0.0
+criterion = nn.CrossEntropyLoss(weight=c_e_l_weight, label_smoothing=c_e_l_smoothing)
+# AdamW for optimizer initialization
+weight_decay = 0.05  # Recommended in LaBraM paper
+learning_rate = 0.001  # Or use the value you want
+
+layer_decay = 0.65  # Recommended in LaBraM paper
+
+parameter_groups = get_parameter_groups(model, learning_rate, weight_decay, layer_decay)
+optimizer = torch.optim.AdamW(parameter_groups)
 
 # ============================
 # Training Loop
 # ============================
 
-print('Starts training...')
-
 num_epochs = 10
 train = True
 if train:
+    print("Starting training...")
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
         for i, (inputs, labels) in enumerate(train_loader):
-
             inputs, labels = inputs.to(device), labels.to(device)
 
             optimizer.zero_grad()
@@ -114,14 +179,76 @@ if train:
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
-            
+
+            if i % 25 == 0:
+                print(f'Epoch {epoch + 1}\nIteration {i}\nLoss: {loss}')
+
+
+
             running_loss += loss.item()
-            if i % 10 == 0:
-                print(f'Epoch {epoch}, Loss: {loss}')
+
         print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {running_loss / len(train_loader):.4f}")
 
-torch.save(model.state_dict(), "eeg_labram_model.pth")
-print("Training complete and model saved.")
+#     # Save model
+#     torch.save(model.state_dict(), os.path.join(model_dir, "eeg_labram_model.pth"))
+#     print("Training complete and model saved.")
+
+# ============================
+# Quick Test Training (for debugging, comment out in production)
+# ============================
+
+# Defining hyperparameters
+quick_num_epochs = 4
+test_subset_size = 256
+quick_batch_size = 8
+
+# Creating dataset
+small_train_loader = DataLoader(Subset(dataset, list(train_idx)[:test_subset_size]), batch_size=quick_batch_size, shuffle=True)
+
+# Quick test training loop
+# print("Starting quick test training loop...")
+# for epoch in range(quick_num_epochs):
+#     model.train()
+#     running_loss = 0.0
+#     for inputs, labels in small_train_loader:
+#         inputs, labels = inputs.to(device), labels.to(device)
+#         optimizer.zero_grad()
+#         outputs = model(inputs, electrodes=electrode_names)
+#         loss = criterion(outputs, labels)
+#         loss.backward()
+#         optimizer.step()
+#         running_loss += loss.item()
+#     print(f"[Quick Test] Epoch {epoch + 1}/{quick_num_epochs}, Loss: {running_loss / len(small_train_loader):.4f}")
+
+# Save model in a cross-platform way (optional for quick test)
+# torch.save(model.state_dict(), os.path.join(model_dir, "eeg_labram_model_quicktest.pth"))
+# print("Quick test training complete and model saved.")
+
+# Print model hyperparameters after training
+warmup_epochs = 0  # To be implemented
+seed = 0  # To be implemented
+
+TriosForLater = 0  # To be implemented
+
+print("\nModel Information:")
+print(f"  Model: {model.__class__.__name__}")
+print(f"  Number of classes: {model.num_classes if hasattr(model, 'num_classes') else 2}")
+print(f"  Seed: {seed}")
+print(f"  Device: {device}")
+
+print("\nTraining Hyperparameters:")
+print(f"  CrossEntropyLoss weight: {c_e_l_weight}")
+print(f"  CrossEntropyLoss label smoothing: {c_e_l_smoothing}")
+print(f"  Learning rate: {optimizer.param_groups[0]['lr']}")
+print(f"  Weight decay: {weight_decay}")
+print(f"  Batch size: {small_train_loader.batch_size}")
+print(f"  Epochs: {quick_num_epochs}")
+print(f"  Warmup epochs: {warmup_epochs}")
+print(f"  Layer decay: {layer_decay}")
+print(f"  Drop path: {drop_path}")
+print(f" D_R_B: {TriosForLater}")
+print(f" A_P_E: {TriosForLater}")
+print(f" D_Q_B: {TriosForLater}")
 
 # ============================
 # Evaluation
@@ -129,6 +256,8 @@ print("Training complete and model saved.")
 
 model.eval()
 all_preds, all_trues = [], []
+
+print("Starting evaluation...")
 
 with torch.no_grad():
     for inputs, labels in test_loader:
