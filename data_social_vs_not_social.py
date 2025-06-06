@@ -6,7 +6,7 @@ import os
 import torch
 
 # Load metadata
-df_info = pd.read_pickle("data/FG_overview_df_v2.pkl")
+df_info = pd.read_pickle("../data/FG_overview_df_v2.pkl")
 
 # Mapping of condition names to MNE event IDs
 event_labels = {
@@ -22,7 +22,7 @@ device_event_labels = {
     3: {303, 304, 307, 308, 309, 310},
 }
 
-file_paths = glob.glob("data/*_FG_preprocessed-epo.fif")
+file_paths = glob.glob("../data/*_FG_preprocessed-epo.fif")
 chunk_size = 4
 num_patches = 6
 
@@ -83,8 +83,8 @@ for i in range(0, len(file_paths), chunk_size):
         fb_labels_tensor = torch.tensor(fb_labels, dtype=torch.long)
         time_per_patch = fb_tensor.shape[2] // num_patches
         fb_tensor = fb_tensor.reshape(fb_tensor.shape[0], fb_tensor.shape[1], num_patches, time_per_patch)
-        torch.save(fb_tensor, f"processed2/social_feedback_chunk_{i//chunk_size}.pt")
-        torch.save(fb_labels_tensor, f"processed2/social_feedback_labels_{i//chunk_size}.pt")
+        torch.save(fb_tensor, f"../processed2/social_feedback_chunk_{i//chunk_size}.pt")
+        torch.save(fb_labels_tensor, f"../processed2/social_feedback_labels_{i//chunk_size}.pt")
         print(f"Saved feedback chunk {i//chunk_size} - shape {fb_tensor.shape}")
 
     # Save no-feedback chunk
@@ -93,6 +93,6 @@ for i in range(0, len(file_paths), chunk_size):
         nf_labels_tensor = torch.tensor(nf_labels, dtype=torch.long)
         time_per_patch = nf_tensor.shape[2] // num_patches
         nf_tensor = nf_tensor.reshape(nf_tensor.shape[0], nf_tensor.shape[1], num_patches, time_per_patch)
-        torch.save(nf_tensor, f"processed2/social_nofeedback_chunk_{i//chunk_size}.pt")
-        torch.save(nf_labels_tensor, f"processed2/social_nofeedback_labels_{i//chunk_size}.pt")
+        torch.save(nf_tensor, f"../processed2/social_nofeedback_chunk_{i//chunk_size}.pt")
+        torch.save(nf_labels_tensor, f"../processed2/social_nofeedback_labels_{i//chunk_size}.pt")
         print(f"Saved no-feedback chunk {i//chunk_size} - shape {nf_tensor.shape}")
