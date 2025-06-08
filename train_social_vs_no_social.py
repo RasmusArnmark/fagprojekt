@@ -96,7 +96,7 @@ scheduler_cycle_limit =  1
 wandb.init(
     project="Fagprojekt_eeg",      
     entity="fagprojekt_eeg",       
-    name="LaBraM_finetune",        
+    name="Solo vs Group Social EEG",        
     config={                      
         "base_lr": base_learning_rate,
         "batch_size": batch_size,
@@ -119,12 +119,6 @@ labels_data = torch.cat([torch.load(f) for f in label_files], dim=0)
 
 print(f"Loaded EEG tensor of shape {eeg_data.shape}")
 print(f"Loaded labels tensor of shape {labels_data.shape}")
-
-# --- compute inverse-frequency weights ---------------------------------
-labels_np      = labels_data.numpy()          # 1-D array of 0s and 1s
-class_counts   = np.bincount(labels_np)       # e.g. [1641, 185]
-class_weights  = 1. / class_counts            # [1/1641, 1/185]
-print("class weights:", class_weights)
 
 # ============================
 # Load Electrode Names
@@ -149,9 +143,9 @@ test_subset   = Subset(dataset, test_idx)
 # create WeightedRandomSampler to compensate the 1641 vs 185 imbalance
 # ------------------------------------------------------------------
 train_subset   = Subset(dataset, train_idx)
-train_labels   = labels_data[train_idx]          # labels tensor for those indices
+train_labels   = labels_data[train_idx]         
 sub_counts     = torch.bincount(train_labels)
-inv_freq       = 1. / sub_counts.float()          # e.g. [1/1312, 1/148]
+inv_freq       = 1. / np.sqrt(sub_counts.float())         
 sample_weights = inv_freq[train_labels]
 
 # a weight for every sample in the subset
@@ -162,8 +156,8 @@ sampler = WeightedRandomSampler(sample_weights,
 
 sampler = WeightedRandomSampler(
     weights      = sample_weights,
-    num_samples  = len(sample_weights),   # draw as many as in the subset
-    replacement  = True                   # with replacement → infinite epochs
+    num_samples  = len(sample_weights),  
+    replacement  = True                  
 )
 
 train_loader = DataLoader(train_subset, batch_size=batch_size,
