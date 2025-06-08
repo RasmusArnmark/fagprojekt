@@ -244,8 +244,8 @@ if train:
         })
 
 #     # Save model
-#     torch.save(model.state_dict(), os.path.join(model_dir, "eeg_labram_model.pth"))
-#     print("Training complete and model saved.")
+torch.save(model.state_dict(), os.path.join(model_dir, "eeg_labram_model.pth"))
+print("Training complete and model saved.")
 
 # ============================
 # Evaluation
