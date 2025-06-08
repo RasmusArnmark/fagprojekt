@@ -10,6 +10,7 @@ import pickle
 import random
 import wandb
 from sklearn.metrics import accuracy_score, f1_score
+from torch.utils.data import WeightedRandomSampler
 
 from torch import nn, optim
 from torch.utils.data import Dataset, DataLoader, Subset
@@ -77,7 +78,7 @@ weight_decay = 0.05
 layer_decay = 0.65
 drop_path =  0.1
 batch_size = 64
-num_epochs = 3
+num_epochs = 10
 warmup_epochs = 5
 scheduler_lr_min =  1e-6
 scheduler_warmup_lr_init =  1e-6
@@ -140,8 +141,34 @@ electrode_names = [ch.upper() for ch in epochs.info['ch_names']]
 
 dataset = EEGDataset(eeg_data, labels_data)
 train_idx, test_idx = train_test_split(range(len(dataset)), test_size=0.2, stratify=labels_data, random_state=42)
-train_loader = DataLoader(Subset(dataset, train_idx), batch_size=16, shuffle=True)
-test_loader = DataLoader(Subset(dataset, test_idx), batch_size=16)
+
+train_subset  = Subset(dataset, train_idx)
+test_subset   = Subset(dataset, test_idx)
+
+# ------------------------------------------------------------------
+# create WeightedRandomSampler to compensate the 1641 vs 185 imbalance
+# ------------------------------------------------------------------
+train_subset   = Subset(dataset, train_idx)
+train_labels   = labels_data[train_idx]          # labels tensor for those indices
+sub_counts     = torch.bincount(train_labels)
+inv_freq       = 1. / sub_counts.float()          # e.g. [1/1312, 1/148]
+sample_weights = inv_freq[train_labels]
+
+# a weight for every sample in the subset
+sampler = WeightedRandomSampler(sample_weights,
+                                num_samples=len(sample_weights),
+                                replacement=True)
+
+
+sampler = WeightedRandomSampler(
+    weights      = sample_weights,
+    num_samples  = len(sample_weights),   # draw as many as in the subset
+    replacement  = True                   # with replacement → infinite epochs
+)
+
+train_loader = DataLoader(train_subset, batch_size=batch_size,
+                          sampler=sampler)
+test_loader  = DataLoader(test_subset,  batch_size=batch_size)
 
 # ============================
 # Model Initialization
@@ -187,17 +214,16 @@ if os.path.exists(pretrained_path):
 # ============================
 
 # CrossEntropyLoss for criterion
-weight_tensor = torch.tensor(class_weights, dtype=torch.float32).to(device)
+loss_w = (sub_counts.max() / sub_counts).float().to(device)   # [1., 8-9]
 
 criterion = nn.CrossEntropyLoss(
-    weight=weight_tensor,                     # <-- key line
+    weight=loss_w,                     # <-- key line
     label_smoothing=cross_entropy_loss_smoothing
 )
 
-wandb.config.update({
-    "cls_weight_majority": float(class_weights[0]),
-    "cls_weight_minority": float(class_weights[1]),
-})
+
+wandb.config.update({"loss_weight_group": float(loss_w[0]),
+                     "loss_weight_solo" : float(loss_w[1])})
 
 # AdamW for optimizer initialization
 parameter_groups = get_parameter_groups(model, base_learning_rate, weight_decay, layer_decay)
@@ -243,8 +269,8 @@ if train:
         })
 
 #     # Save model
-#     torch.save(model.state_dict(), os.path.join(model_dir, "eeg_labram_model.pth"))
-#     print("Training complete and model saved.")
+torch.save(model.state_dict(), os.path.join(model_dir, "eeg_group_vs_no_group.pth"))
+print("Training complete and model saved.")
 
 # ============================
 # Evaluation
@@ -276,13 +302,13 @@ cm = confusion_matrix(all_trues, all_preds)
 # log confusion matrix as an image
 fig = plt.figure(figsize=(6,5))
 sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
-            xticklabels=["No FB","FB"], yticklabels=["No FB","FB"])
+            xticklabels=["Solo","Group"], yticklabels=["Solo","Group"])
 plt.xlabel("Predicted"); plt.ylabel("True"); plt.title("Confusion")
 plt.tight_layout()
 
 wandb.log({"confusion_matrix": wandb.Image(fig)})
 plt.show() 
 
-print(classification_report(all_trues, all_preds, target_names=["No Feedback", "Feedback"]))
+print(classification_report(all_trues, all_preds, target_names=["Solo", "Group"]))
 
 wandb.finish()
