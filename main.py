@@ -78,6 +78,7 @@ class EEGDataset(Dataset):
 # Hyperparameters
 # ============================
 
+
 base_learning_rate = 1e-3
 weight_decay = 0.05
 layer_decay = 0.65
@@ -111,12 +112,17 @@ wandb.init(
 )
 
 
+
 # ============================
 # Load Preprocessed Data
 # ============================
 
-eeg_files = sorted(glob.glob("processed/eeg_chunk_*.pt"))
-label_files = sorted(glob.glob("processed/labels_chunk_*.pt"))
+processed_dir = "processed"
+eeg_dir = os.path.join(processed_dir, "eeg_chunk")
+labels_dir = os.path.join(processed_dir, "labels_chunk")
+
+eeg_files = sorted(glob.glob(os.path.join(eeg_dir, "eeg_chunk_*.pt")))
+label_files = sorted(glob.glob(os.path.join(labels_dir, "labels_chunk_*.pt")))
 
 eeg_data = torch.cat([torch.load(f) for f in eeg_files], dim=0)
 labels_data = torch.cat([torch.load(f) for f in label_files], dim=0)
@@ -128,8 +134,10 @@ print(f"Loaded labels tensor of shape {labels_data.shape}")
 # Load Electrode Names
 # ============================
 
+
 example_epochs = pd.read_pickle("data/FG_overview_df_v2.pkl")
 example_fif = glob.glob("data/*_FG_preprocessed-epo.fif")[0]
+
 epochs = mne.read_epochs(example_fif, preload=False)
 electrode_names = [ch.upper() for ch in epochs.info['ch_names']]
 
@@ -146,7 +154,9 @@ test_loader = DataLoader(Subset(dataset, test_idx), batch_size=16)
 # Model Initialization
 # ============================
 
+
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+
 drop_path = 0.1
 
 model = LaBraM(
@@ -156,6 +166,7 @@ model = LaBraM(
 ).to(device)
 
 wandb.watch(model, log="all", log_freq=10)   # log gradients & weights every 10 steps
+
 
 
 # Ensure model directory exists
@@ -179,6 +190,7 @@ if os.path.exists(pretrained_path):
 
     model.load_state_dict(new_state_dict, strict=False)
     print("Loaded pretrained model (student weights).")
+
 
 
 # ============================
