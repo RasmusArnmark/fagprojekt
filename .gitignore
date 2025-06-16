@@ -183,10 +183,13 @@ processed2/
 processed/
 processed2/
 
-HyperParameter/
+wandb/
+*.wandb
+yperParameter/
 
 wandb/
 
 LaBraM-main/
 
 venv311/
+

@@ -10,6 +10,8 @@ import seaborn as sns
 import mne
 import pickle
 import random
+import wandb
+from sklearn.metrics import accuracy_score, f1_score
 
 from torch import nn, optim
 from torch.utils.data import Dataset, DataLoader, Subset
@@ -76,53 +78,40 @@ class EEGDataset(Dataset):
 # Hyperparameters
 # ============================
 
-use_fixed_constants = True
 
-if use_fixed_constants == True:
-    ### Constant
-    base_learning_rate = 1e-3
-    weight_decay = 0.05
-    layer_decay = 0.65
-    drop_path =  0.1
-    batch_size = 12
-    num_epochs = 20
-    warmup_epochs = 5
-    scheduler_lr_min =  1e-6
-    scheduler_warmup_lr_init =  1e-6
-    cross_entropy_loss_smoothing = 0.1
-    disable_relative_positive_bias =  False
-    absolute_positive_embedding =  True
-    disable_qkv_bias =   False
-    test_size =  0.2
-    cross_entropy_loss_weight =  None
-    scheduler_cycle_limit =  1
-    print("Using fixed constants for hyperparameters.")
-    print("Consider using HyperTuner.py to improve results.")
-else:
-    ### From File (Use HyperTuner.py)
-    csv_path = os.path.join("HyperParameter", "hyperparameter_search_results.csv")
-    hyper_df = pd.read_csv(csv_path)
+base_learning_rate = 1e-3
+weight_decay = 0.05
+layer_decay = 0.65
+drop_path =  0.1
+batch_size = 64
+num_epochs = 10
+warmup_epochs = 5
+scheduler_lr_min =  1e-6
+scheduler_warmup_lr_init =  1e-6
+cross_entropy_loss_smoothing = 0.1
+disable_relative_positive_bias =  False
 
-    # Find the row with the best F1 score
-    best_row = hyper_df.loc[hyper_df['f1_score'].idxmax()]
+test_size =  0.2
+cross_entropy_loss_weight =  None
+scheduler_cycle_limit =  1
 
-    # Set each hyperparameter individually (cast to correct type as needed)
-    base_learning_rate = float(best_row['base_learning_rate'])
-    weight_decay = float(best_row['weight_decay'])
-    layer_decay = float(best_row['layer_decay'])
-    drop_path = float(best_row['drop_path'])
-    batch_size = int(best_row['batch_size'])
-    num_epochs = int(best_row['num_epochs'])
-    warmup_epochs = int(best_row['warmup_epochs'])
-    scheduler_lr_min = float(best_row['scheduler_lr_min'])
-    scheduler_warmup_lr_init = float(best_row['scheduler_warmup_lr_init'])
-    cross_entropy_loss_smoothing = float(best_row['cross_entropy_loss_smoothing'])
-    disable_relative_positive_bias = bool(best_row['disable_relative_positive_bias'])
-    absolute_positive_embedding = bool(best_row['absolute_positive_embedding'])
-    disable_qkv_bias = bool(best_row['disable_qkv_bias'])
-    test_size = float(best_row['test_size'])
-    cross_entropy_loss_weight = None if pd.isna(best_row['cross_entropy_loss_weight']) else float(best_row['cross_entropy_loss_weight'])
-    scheduler_cycle_limit = int(best_row['scheduler_cycle_limit'])
+# ============================
+# WandB Initialization
+# ============================
+
+wandb.init(
+    project="Fagprojekt_eeg",      
+    entity="fagprojekt_eeg",       
+    name="LaBraM_finetune",        
+    config={                      
+        "base_lr": base_learning_rate,
+        "batch_size": batch_size,
+        "epochs": num_epochs,
+
+    }
+)
+
+
 
 # ============================
 # Load Preprocessed Data
@@ -145,8 +134,10 @@ print(f"Loaded labels tensor of shape {labels_data.shape}")
 # Load Electrode Names
 # ============================
 
-data_dir = os.path.join("data", "PreprocessedEEGData")
-example_fif = glob.glob(os.path.join(data_dir, "*_FG_preprocessed-epo.fif"))[0]
+
+example_epochs = pd.read_pickle("data/FG_overview_df_v2.pkl")
+example_fif = glob.glob("data/*_FG_preprocessed-epo.fif")[0]
+
 epochs = mne.read_epochs(example_fif, preload=False)
 electrode_names = [ch.upper() for ch in epochs.info['ch_names']]
 
@@ -163,7 +154,9 @@ test_loader = DataLoader(Subset(dataset, test_idx), batch_size=16)
 # Model Initialization
 # ============================
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+
 drop_path = 0.1
 
 model = LaBraM(
@@ -171,6 +164,10 @@ model = LaBraM(
     num_classes=2,
     drop_path=drop_path
 ).to(device)
+
+wandb.watch(model, log="all", log_freq=10)   # log gradients & weights every 10 steps
+
+
 
 # Ensure model directory exists
 model_dir = "models"
@@ -193,6 +190,7 @@ if os.path.exists(pretrained_path):
 
     model.load_state_dict(new_state_dict, strict=False)
     print("Loaded pretrained model (student weights).")
+
 
 
 # ============================
@@ -237,11 +235,17 @@ if train:
 
             running_loss += loss.item()
 
-        print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {running_loss / len(train_loader):.4f}")
+        epoch_loss = running_loss / len(train_loader)
+        print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss:.4f}")
+        wandb.log({
+            "epoch": epoch + 1,
+            "train/loss": epoch_loss,
+            "train/lr": optimizer.param_groups[0]["lr"]
+        })
 
 #     # Save model
-#     torch.save(model.state_dict(), os.path.join(model_dir, "eeg_labram_model.pth"))
-#     print("Training complete and model saved.")
+torch.save(model.state_dict(), os.path.join(model_dir, "eeg_labram_model.pth"))
+print("Training complete and model saved.")
 
 # ============================
 # Evaluation
@@ -263,16 +267,23 @@ with torch.no_grad():
 # ============================
 # Results
 # ============================
- 
-cm = confusion_matrix(all_trues, all_preds)
-plt.figure(figsize=(8, 6))
-sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=["No Feedback", "Feedback"], yticklabels=["No Feedback", "Feedback"])
-plt.title("Confusion Matrix")
-plt.xlabel("Predicted")
-plt.ylabel("True")
-plt.tight_layout()
-plt.show()
 
-print("Classification Report:")
+acc = accuracy_score(all_trues, all_preds)
+f1  = f1_score(all_trues, all_preds)
+
+wandb.log({"val/accuracy": acc, "val/f1": f1})
+cm = confusion_matrix(all_trues, all_preds)
+
+# log confusion matrix as an image
+fig = plt.figure(figsize=(6,5))
+sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+            xticklabels=["No FB","FB"], yticklabels=["No FB","FB"])
+plt.xlabel("Predicted"); plt.ylabel("True"); plt.title("Confusion")
+plt.tight_layout()
+
+wandb.log({"confusion_matrix": wandb.Image(fig)})
+plt.show() 
+
 print(classification_report(all_trues, all_preds, target_names=["No Feedback", "Feedback"]))
 
+wandb.finish()

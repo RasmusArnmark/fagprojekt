@@ -2,18 +2,60 @@ import torch
 import numpy as np
 import glob
 import os
-import mne
-import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import mne
+import pickle
+import random
+import wandb
+from sklearn.metrics import accuracy_score, f1_score
+from torch.utils.data import WeightedRandomSampler
 
 from torch import nn, optim
 from torch.utils.data import Dataset, DataLoader, Subset
 from torcheeg.models import LaBraM
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, classification_report
+from timm.scheduler import CosineLRScheduler
 
+def get_parameter_groups(model, base_lr, weight_decay, layer_decay):
+    parameter_group_names = {}
+    parameter_groups = []
+
+    num_layers = model.get_num_layers() if hasattr(model, "get_num_layers") else 12  # fallback
+    # Assign each parameter to a layer id
+    def get_layer_id_for_vit(var_name):
+        if var_name in ['cls_token', 'pos_embed']:
+            return 0
+        elif var_name.startswith('patch_embed'):
+            return 0
+        elif var_name.startswith('blocks'):
+            layer_id = int(var_name.split('.')[1])
+            return layer_id + 1
+        else:
+            return num_layers
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        group_name = "layer_%d" % get_layer_id_for_vit(name)
+        if group_name not in parameter_group_names:
+            scale = layer_decay ** (num_layers - get_layer_id_for_vit(name))
+            parameter_group_names[group_name] = {
+                "params": [],
+                "lr": base_lr * scale,
+                "weight_decay": weight_decay,
+            }
+        parameter_group_names[group_name]["params"].append(param)
+
+    for group_name in parameter_group_names:
+        parameter_groups.append(parameter_group_names[group_name])
+    return parameter_groups
+
+# ============================
+# Dataset Definition
+# ============================
 
 class EEGDataset(Dataset):
     def __init__(self, eeg_data, labels):
@@ -25,88 +67,242 @@ class EEGDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.eeg_data[idx], self.labels[idx]
+    
+
+# ============================
+# Hyperparameters
+# ============================
+
+base_learning_rate = 1e-3
+weight_decay = 0.05
+layer_decay = 0.65
+drop_path =  0.1
+batch_size = 64
+num_epochs = 10
+warmup_epochs = 5
+scheduler_lr_min =  1e-6
+scheduler_warmup_lr_init =  1e-6
+cross_entropy_loss_smoothing = 0.1
+disable_relative_positive_bias =  False
+
+test_size =  0.2
+cross_entropy_loss_weight =  None
+scheduler_cycle_limit =  1
+
+# ============================
+# WandB Initialization
+# ============================
+
+wandb.init(
+    project="Fagprojekt_eeg",      
+    entity="fagprojekt_eeg",       
+    name="Solo vs Group Social EEG",        
+    config={                      
+        "base_lr": base_learning_rate,
+        "batch_size": batch_size,
+        "epochs": num_epochs,
+
+    }
+)
 
 
-def load_data(condition: str):
-    eeg_files = sorted(glob.glob(f"processed2/social_{condition}_chunk_*.pt"))
-    label_files = sorted(glob.glob(f"processed2/social_{condition}_labels_*.pt"))
+# ============================
+# Load Preprocessed Data
+# ============================
+condition = "feedback"  # or "nofeedback"
 
-    eeg_data = torch.cat([torch.load(f) for f in eeg_files], dim=0)
-    labels = torch.cat([torch.load(f) for f in label_files], dim=0)
-    return eeg_data, labels
+eeg_files = sorted(glob.glob(f"processed2/social_{condition}_chunk_*.pt"))
+label_files = sorted(glob.glob(f"processed2/social_{condition}_labels_*.pt"))
+
+eeg_data = torch.cat([torch.load(f) for f in eeg_files], dim=0)
+labels_data = torch.cat([torch.load(f) for f in label_files], dim=0)
+
+print(f"Loaded EEG tensor of shape {eeg_data.shape}")
+print(f"Loaded labels tensor of shape {labels_data.shape}")
+
+# ============================
+# Load Electrode Names
+# ============================
+
+example_epochs = pd.read_pickle("data/FG_overview_df_v2.pkl")
+example_fif = glob.glob("data/*_FG_preprocessed-epo.fif")[0]
+epochs = mne.read_epochs(example_fif, preload=False)
+electrode_names = [ch.upper() for ch in epochs.info['ch_names']]
+
+# ============================
+# Create Dataset and Dataloaders
+# ============================
+
+dataset = EEGDataset(eeg_data, labels_data)
+train_idx, test_idx = train_test_split(range(len(dataset)), test_size=0.2, stratify=labels_data, random_state=42)
+
+train_subset  = Subset(dataset, train_idx)
+test_subset   = Subset(dataset, test_idx)
+
+# ------------------------------------------------------------------
+# create WeightedRandomSampler to compensate the 1641 vs 185 imbalance
+# ------------------------------------------------------------------
+train_subset   = Subset(dataset, train_idx)
+train_labels   = labels_data[train_idx]         
+sub_counts     = torch.bincount(train_labels)
+inv_freq       = 1. / np.sqrt(sub_counts.float())         
+sample_weights = inv_freq[train_labels]
+
+# a weight for every sample in the subset
+sampler = WeightedRandomSampler(sample_weights,
+                                num_samples=len(sample_weights),
+                                replacement=True)
 
 
-def load_electrode_names():
-    fif_file = glob.glob("data/*_FG_preprocessed-epo.fif")[0]
-    epochs = mne.read_epochs(fif_file, preload=False)
-    return [ch.upper() for ch in epochs.info['ch_names']]
+sampler = WeightedRandomSampler(
+    weights      = sample_weights,
+    num_samples  = len(sample_weights),  
+    replacement  = True                  
+)
+
+train_loader = DataLoader(train_subset, batch_size=batch_size,
+                          sampler=sampler)
+test_loader  = DataLoader(test_subset,  batch_size=batch_size)
+
+# ============================
+# Model Initialization
+# ============================
+
+device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+drop_path = 0.1
+
+model = LaBraM(
+    in_channels=len(electrode_names),
+    num_classes=2,
+    drop_path=drop_path
+).to(device)
+
+wandb.watch(model, log="all", log_freq=10)   # log gradients & weights every 10 steps
 
 
-def train_model(eeg_data, labels, electrode_names, model_path, n_epochs=10):
-    dataset = EEGDataset(eeg_data, labels)
-    train_idx, test_idx = train_test_split(range(len(dataset)), test_size=0.2, stratify=labels, random_state=42)
-    train_loader = DataLoader(Subset(dataset, train_idx), batch_size=16, shuffle=True)
-    test_loader = DataLoader(Subset(dataset, test_idx), batch_size=16)
+# Ensure model directory exists
+model_dir = "models"
+os.makedirs(model_dir, exist_ok=True)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = LaBraM(in_channels=len(electrode_names), num_classes=2).to(device)
+# Load pretrained weights if available
+pretrained_path = os.path.join(model_dir, "labram-base.pth")
+if os.path.exists(pretrained_path):
+    checkpoint = torch.load(pretrained_path, map_location=device, weights_only=False)
+    print(f"found this: {checkpoint.keys()}")
+    state_dict = checkpoint["model"]
 
-    if os.path.exists("models/labram-base.pth"):
-        model.load_state_dict(torch.load("models/labram-base.pth"))
-        print("Loaded pretrained model.")
-        
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    # Remove 'student.' prefix from all keys if present
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith("student."):
+            new_state_dict[k[len("student."):]] = v
+        else:
+            new_state_dict[k] = v
 
-    print(f"Training on {len(train_idx)} samples, testing on {len(test_idx)}")
+    model.load_state_dict(new_state_dict, strict=False)
+    print("Loaded pretrained model (student weights).")
 
-    for epoch in range(n_epochs):
+
+# ============================
+# Loss and Optimizer Initialization
+# ============================
+
+# CrossEntropyLoss for criterion
+loss_w = (sub_counts.max() / sub_counts).float().to(device)   # [1., 8-9]
+
+criterion = nn.CrossEntropyLoss(
+    weight=loss_w,                     # <-- key line
+    label_smoothing=cross_entropy_loss_smoothing
+)
+
+
+wandb.config.update({"loss_weight_group": float(loss_w[0]),
+                     "loss_weight_solo" : float(loss_w[1])})
+
+# AdamW for optimizer initialization
+parameter_groups = get_parameter_groups(model, base_learning_rate, weight_decay, layer_decay)
+optimizer = torch.optim.AdamW(parameter_groups)
+scheduler = CosineLRScheduler(
+    optimizer,
+    t_initial=num_epochs,
+    lr_min=1e-6,                # You can adjust this or make it a variable
+    warmup_lr_init=1e-5,        # You can adjust this or make it a variable
+    warmup_t=2,                 # Number of warmup epochs, adjust as needed
+    cycle_limit=1,              # Number of cycles
+    t_in_epochs=True,
+)
+
+# ============================
+# Training Loop
+# ============================
+
+train = True
+if train:
+    print("Starting training...")
+    for epoch in range(num_epochs):
+        scheduler.step(epoch)
         model.train()
         running_loss = 0.0
-        for X, y in train_loader:
-            X, y = X.to(device), y.to(device)
+        for inputs, labels in train_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+
             optimizer.zero_grad()
-            outputs = model(X, electrodes=electrode_names)
-            loss = criterion(outputs, y)
+            outputs = model(inputs, electrodes=electrode_names)
+            loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
+
             running_loss += loss.item()
-        print(f"Epoch {epoch+1}/{n_epochs}, Loss: {running_loss / len(train_loader):.4f}")
 
-    torch.save(model.state_dict(), model_path)
-    print(f"✅ Model saved to {model_path}")
+        epoch_loss = running_loss / len(train_loader)
+        print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss:.4f}")
+        wandb.log({
+            "epoch": epoch + 1,
+            "train/loss": epoch_loss,
+            "train/lr": optimizer.param_groups[0]["lr"]
+        })
 
-    # Evaluation
-    model.eval()
-    all_preds, all_trues = [], []
-    with torch.no_grad():
-        for X, y in test_loader:
-            X, y = X.to(device), y.to(device)
-            outputs = model(X, electrodes=electrode_names)
-            _, preds = torch.max(outputs, 1)
-            all_preds.extend(preds.cpu().numpy())
-            all_trues.extend(y.cpu().numpy())
+#     # Save model
+torch.save(model.state_dict(), os.path.join(model_dir, "eeg_group_vs_no_group.pth"))
+print("Training complete and model saved.")
 
-    cm = confusion_matrix(all_trues, all_preds)
-    plt.figure(figsize=(6, 5))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['Solo', 'Social'], yticklabels=['Solo', 'Social'])
-    plt.title("Confusion Matrix")
-    plt.xlabel("Predicted")
-    plt.ylabel("True")
-    plt.tight_layout()
-    plt.show()
+# ============================
+# Evaluation
+# ============================
 
-    print("Classification Report:")
-    print(classification_report(all_trues, all_preds, target_names=["Solo", "Social"]))
+model.eval()
+all_preds, all_trues = [], []
 
+print("Starting evaluation...")
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--condition", choices=["feedback", "nofeedback"], required=True)
-    parser.add_argument("--epochs", type=int, default=10)
-    args = parser.parse_args()
+with torch.no_grad():
+    for inputs, labels in test_loader:
+        inputs, labels = inputs.to(device), labels.to(device)
+        outputs = model(inputs, electrodes=electrode_names)
+        _, preds = torch.max(outputs, 1)
+        all_preds.extend(preds.cpu().numpy())
+        all_trues.extend(labels.cpu().numpy())
 
-    eeg_data, labels = load_data(args.condition)
-    electrodes = load_electrode_names()
-    model_path = f"models/social_{args.condition}_model.pth"
-    train_model(eeg_data, labels, electrodes, model_path, n_epochs=args.epochs)
+# ============================
+# Results
+# ============================
+
+acc = accuracy_score(all_trues, all_preds)
+f1  = f1_score(all_trues, all_preds)
+
+wandb.log({"val/accuracy": acc, "val/f1": f1})
+cm = confusion_matrix(all_trues, all_preds)
+
+# log confusion matrix as an image
+fig = plt.figure(figsize=(6,5))
+sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+            xticklabels=["Solo","Group"], yticklabels=["Solo","Group"])
+plt.xlabel("Predicted"); plt.ylabel("True"); plt.title("Confusion")
+plt.tight_layout()
+
+wandb.log({"confusion_matrix": wandb.Image(fig)})
+plt.show() 
+
+print(classification_report(all_trues, all_preds, target_names=["Solo", "Group"]))
+
+wandb.finish()
