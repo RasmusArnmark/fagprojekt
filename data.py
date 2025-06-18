@@ -1,104 +1,154 @@
+# data.py
+# ------------------------------------------------------------
+#  Pre-process FG triad EEG → PyTorch tensors with subject IDs
+# ------------------------------------------------------------
+import os, glob, re
 import numpy as np
-import mne
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-import glob
-import os
-import pickle
 import torch
+import mne
+from sklearn.preprocessing import LabelEncoder
+from typing import Tuple, List
 
-### Edit these paths to point to your data directories ###
-# Load metadata DataFrame
-df_info = pd.read_pickle(os.path.join("data", "FG_Data_For_Students", "FG_Data_For_Students", "FG_overview_df_v2.pkl"))
-# Define data directory / Pointer
-file_paths = glob.glob(os.path.join("data", "PreprocessedEEGData", "*_FG_preprocessed-epo.fif"))
-print(f"Found {len(file_paths)} EEG files.")
-### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
+# ---------------- USER-CONFIGURABLE PATHS --------------------
+RAW_DIR      = "data/PreprocessedData"          # *.fif files
+OVERVIEW_PKL = "data/FG_overview_df_v2.pkl"
+FORCE_PKL    = "data/forcedf.pkl"                  # loaded but not yet used
+OUT_DIR      = "processed"                         # will hold eeg_chunk/ labels_chunk/
+CHUNK_SIZE   = 4                                   # files per saved chunk
+RESAMPLE_HZ  = 200
+NUM_PATCHES  = 6                                   # for LaBraM window reshape
+# -------------------------------------------------------------
 
-# Define event IDs Obsolete, but kept for reference
-event_labels = {'T1P': 301, 'T1Pn': 302, 'T3P': 303, 'T3Pn': 304,
-                'T12P': 305, 'T12Pn': 306, 'T13P': 307, 'T13Pn': 308,
-                'T23P': 309, 'T23Pn': 310}
+SOLO_CODES   = {301, 302}                 # T1P, T1Pn     – always keep
+TRIAD_CODES  = {303, 304}                 # T3P, T3Pn     – all three keep
+DYAD_CODES   = {                          # per EEG_device
+    1: {305, 306, 307, 308},              # T12*, T13*
+    2: {305, 306, 309, 310},              # T12*, T23*
+    3: {307, 308, 309, 310},              # T13*, T23*
+}          # T3P, T3Pn
 
-### Current folders that'll be used
-# Define processed directory and subfolders, names can be changed as desired
-processed_dir = "processed"
-eeg_dir = os.path.join(processed_dir, "eeg_chunk")
-labels_dir = os.path.join(processed_dir, "labels_chunk")
+# event IDs grouped by *who is involved*
 
-# Ensure all directories exist
-for d in [processed_dir, eeg_dir, labels_dir]:
-    if not os.path.exists(d):
-        os.makedirs(d)
-        print(f"folder created: {d}")
+# Solo / dyad codes that carry *feedback* (odd numbers) vs *no-feedback* (even)
+IS_FEEDBACK = lambda ev_id: ev_id % 2 == 1
 
-### Settings for processing
-chunk_size = 4
-num_patches = 6
+def keep_events(device_id: int) -> set[int]:
+    """Return the exact event-IDs that involve the current headset."""
+    return SOLO_CODES | TRIAD_CODES | DYAD_CODES[device_id]
 
+# -------------------------------------------------------------------------
+def _parse_subject_code(fname: str) -> str:
+    """
+    '326A_FG_preprocessed-epo.fif' -> '326A'
+    Raise ValueError if the pattern does not match.
+    """
+    m = re.match(r"(\d{3}[A-Z])_FG", os.path.basename(fname))
+    if not m:
+        raise ValueError(f"Cannot parse subject code from {fname}")
+    return m.group(1)
 
-for i in range(0, len(file_paths), chunk_size):
-    batch_files = file_paths[i:i + chunk_size]
-    all_eeg_data, all_labels = [], []
+def row_from_exp_id(exp_id: str, overview: pd.DataFrame) -> pd.Series:
+    """Return the single row whose Exp_id matches the file code (e.g. '301A')."""
+    row = overview.loc[overview["Exp_id"] == exp_id]
+    if row.empty:
+        raise KeyError(f"{exp_id} not found in overview table.")
+    return row.iloc[0] 
 
-    for file_path in batch_files:
-        print(f"Processing file: {file_path}")  # Debug
-        file_name = os.path.basename(file_path).split("_")[0]
-        exp_id = file_name[:4]
+# -------------------------------------------------------------------------
+def preprocess_and_save():
+    overview = pd.read_pickle(OVERVIEW_PKL)
+    _ = pd.read_pickle(FORCE_PKL)
 
-        experiment_participants = df_info[df_info["Exp_id"] == exp_id]
-        if experiment_participants.empty:
-            print(f"No participants for exp_id {exp_id}")  # Debug
-            continue
+    fif_files = sorted(glob.glob(os.path.join(RAW_DIR, "*_FG_preprocessed-epo.fif")))
+    print("Found", len(fif_files), "FIF files")
 
-        try:
-            epochs = mne.read_epochs(file_path, preload=True)
-            epochs.resample(200)
-            eeg_data = epochs.get_data()
-            labels = epochs.events[:, -1]
-        except Exception as e:
-            print(f"Error loading {file_path}: {e}")
-            continue
+    eeg_out = os.path.join(OUT_DIR, "eeg_chunk")
+    lab_out = os.path.join(OUT_DIR, "labels_chunk")
+    for d in (OUT_DIR, eeg_out, lab_out):
+        os.makedirs(d, exist_ok=True)
 
-        for _, row in experiment_participants.iterrows():
-            subject_id = row["Subject_id"]
-            eeg_device = row["EEG_device"]
+    # ▼ 1.  Fit once on *all* participant IDs so the mapping is stable
+    label_enc = LabelEncoder()
+    label_enc.fit(overview["Subject_id"].astype(str).unique())
 
-            device_event_labels = {
-                1: {301, 302, 305, 306, 307, 308},
-                2: {303, 304, 305, 306, 309, 310},
-                3: {307, 308, 309, 310, 303, 304},
-            }
-            valid_events = device_event_labels[eeg_device]
-            valid_trials = [i for i, label in enumerate(labels) if label in valid_events]
+    for batch_start in range(0, len(fif_files), CHUNK_SIZE):
+        batch_files  = fif_files[batch_start: batch_start + CHUNK_SIZE]
+        batch_eeg, batch_lbl, batch_sid = [], [], []
 
-            if not valid_trials:
-                print(f"No valid trials for subject {subject_id} with device {eeg_device}")  # Debug
+        for fpath in batch_files:
+
+            
+            exp_code = _parse_subject_code(fpath)
+            row      = row_from_exp_id(exp_code, overview)
+
+            subject_id = str(row.Subject_id)            # '1049'
+            device_id  = int(row.EEG_device)            # 1 / 2 / 3
+
+            epochs = mne.read_epochs(fpath, preload=True, verbose="ERROR")
+            epochs.resample(RESAMPLE_HZ)
+
+            valid_set = keep_events(device_id)
+            keep_idx  = np.isin(epochs.events[:, -1], list(valid_set))
+            if not np.any(keep_idx):
                 continue
 
-            eeg_subject_data = eeg_data[valid_trials]
-            labels_subject = labels[valid_trials]
+            if batch_start == 0 and fpath == batch_files[0]:      # only first file
+                unique, counts = np.unique(epochs.events[keep_idx, -1], return_counts=True)
+                print("Kept events + counts for", exp_code, ":", dict(zip(unique, counts)))
 
-            eeg_subject_data = (eeg_subject_data - eeg_subject_data.mean()) / eeg_subject_data.std()
-            binary_labels = np.array([1 if label in {301, 303, 305, 307, 309} else 0 for label in labels_subject])
+            data   = epochs.get_data()[keep_idx]
+            labels = (epochs.events[keep_idx, -1] % 2 == 1).astype(int)
 
-            all_eeg_data.append(eeg_subject_data)
-            all_labels.append(binary_labels)
+            data = (data - data.mean(axis=-1, keepdims=True)) / \
+                   (data.std(axis=-1, keepdims=True) + 1e-8)
 
-    print(f"Batch {i//chunk_size}: {len(all_eeg_data)} subjects' data collected")  # Debug
+            batch_eeg.append(data)
+            batch_lbl.append(labels)
+            batch_sid.append(np.full(len(labels), subject_id))
 
-    if all_eeg_data:
-        eeg_tensor = torch.tensor(np.concatenate(all_eeg_data, axis=0), dtype=torch.float32)
-        labels_tensor = torch.tensor(np.concatenate(all_labels, axis=0), dtype=torch.long)
-        time_steps_per_patch = eeg_tensor.shape[2] // num_patches
-        eeg_tensor = eeg_tensor.reshape(eeg_tensor.shape[0], eeg_tensor.shape[1], num_patches, time_steps_per_patch)
+            print(f"▶ {os.path.basename(fpath)}  device={device_id}", end=" ")
 
-        # Use os.path.join for universal paths
-        eeg_path = os.path.join(eeg_dir, f"eeg_chunk_{i//chunk_size}.pt")
-        labels_path = os.path.join(labels_dir, f"labels_chunk_{i//chunk_size}.pt")
-        torch.save(eeg_tensor, eeg_path)
-        torch.save(labels_tensor, labels_path)
-        print(f"Saved chunk {i//chunk_size}: shape {eeg_tensor.shape}")
-    else:
-        print(f"No data to save for batch {i//chunk_size}")  # Debug
+            valid_set = keep_events(device_id)
+            keep_idx  = np.isin(epochs.events[:, -1], list(valid_set))
+            print(f"kept={keep_idx.sum()}") 
+
+        if not batch_eeg:
+            print("Batch", batch_start // CHUNK_SIZE, "empty → skipped")
+            continue
+
+        eeg_tensor = torch.tensor(np.concatenate(batch_eeg, 0), dtype=torch.float32)
+        lbl_tensor = torch.tensor(np.concatenate(batch_lbl),   dtype=torch.long)
+
+        # ▼ 2.  Only transform (no fit) because encoder is fixed
+        sid_int    = label_enc.transform(np.concatenate(batch_sid))
+        sid_tensor = torch.tensor(sid_int, dtype=torch.int32)
+
+        t_per_patch = eeg_tensor.shape[2] // NUM_PATCHES
+        eeg_tensor  = eeg_tensor.reshape(eeg_tensor.shape[0],
+                                         eeg_tensor.shape[1],
+                                         NUM_PATCHES,
+                                         t_per_patch)
+
+        idx = batch_start // CHUNK_SIZE
+        torch.save(eeg_tensor, os.path.join(eeg_out, f"eeg_chunk_{idx}.pt"))
+        torch.save(lbl_tensor, os.path.join(lab_out, f"labels_chunk_{idx}.pt"))
+        torch.save(sid_tensor, os.path.join(lab_out, f"subjects_chunk_{idx}.pt"))
+        print(f"Saved chunk {idx}: EEG {tuple(eeg_tensor.shape)} | {len(lbl_tensor)} labels")
+
+# -------------------------------------------------------------------------
+def load_dataset() -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Utility for main.py – loads all saved chunks into three big tensors."""
+    eeg_files  = sorted(glob.glob(os.path.join(OUT_DIR, "eeg_chunk",   "eeg_chunk_*.pt")))
+    lbl_files  = sorted(glob.glob(os.path.join(OUT_DIR, "labels_chunk","labels_chunk_*.pt")))
+    sid_files  = sorted(glob.glob(os.path.join(OUT_DIR, "labels_chunk","subjects_chunk_*.pt")))
+
+    eeg  = torch.cat([torch.load(f) for f in eeg_files], dim=0)
+    lbl  = torch.cat([torch.load(f) for f in lbl_files], dim=0)
+    sid  = torch.cat([torch.load(f) for f in sid_files], dim=0)
+    assert eeg.shape[0] == lbl.shape[0] == sid.shape[0]
+    return eeg, lbl, sid
+# -------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    preprocess_and_save()

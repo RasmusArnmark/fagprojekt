@@ -1,98 +1,88 @@
+import os, glob, re
 import numpy as np
-import mne
 import pandas as pd
-import glob
-import os
-import torch
+import mne, torch
+from sklearn.preprocessing import LabelEncoder
+from typing import List
 
-# Load metadata
-df_info = pd.read_pickle("data/FG_overview_df_v2.pkl")
+RAW_DIR      = "data/PreprocessedData"
+OVERVIEW_PKL = "data/FG_overview_df_v2.pkl"
+OUT_DIR      = "processed2"
+CHUNK_SIZE   = 4
+RESAMPLE_HZ  = 200
+NUM_PATCHES  = 6
 
-# Mapping of condition names to MNE event IDs
-event_labels = {
-    'T1P': 301, 'T1Pn': 302, 'T3P': 303, 'T3Pn': 304,
-    'T12P': 305, 'T12Pn': 306, 'T13P': 307, 'T13Pn': 308,
-    'T23P': 309, 'T23Pn': 310
+SOLO_CODES   = {301, 302}                 # T1P, T1Pn  – always solo
+TRIAD_CODES  = {303, 304}                 # T3P, T3Pn  – social for everyone
+DYAD_CODES   = {                          # device-specific social codes
+    1: {305, 306, 307, 308},              # T12*, T13*
+    2: {305, 306, 309, 310},              # T12*, T23*
+    3: {307, 308, 309, 310},              # T13*, T23*
 }
 
-# Manually define which event IDs each EEG device participated in
-device_event_labels = {
-    1: {301, 302, 303, 304, 305, 306, 307, 308},
-    2: {303, 304, 305, 306, 309, 310},
-    3: {303, 304, 307, 308, 309, 310},
-}
+def keep_set(device: int) -> set[int]:
+    return SOLO_CODES | TRIAD_CODES | DYAD_CODES[device]
 
-file_paths = glob.glob("data/*_FG_preprocessed-epo.fif")
-chunk_size = 4
-num_patches = 6
+def parse_exp_code(fname: str) -> str:
+    m = re.match(r"(\d{3}[A-Z])_FG", os.path.basename(fname))
+    if not m:
+        raise ValueError(f"cannot parse Exp_id from {fname}")
+    return m.group(1)
 
-for i in range(0, len(file_paths), chunk_size):
-    batch_files = file_paths[i:i + chunk_size]
+def main():
+    overview = pd.read_pickle(OVERVIEW_PKL)
+    label_enc = LabelEncoder().fit(overview["Subject_id"].astype(str))
+    os.makedirs(os.path.join(OUT_DIR, "social_fb"), exist_ok=True)
+    os.makedirs(os.path.join(OUT_DIR, "social_nfb"), exist_ok=True)
 
-    fb_data, fb_labels = [], []
-    nf_data, nf_labels = [], []
+    fif_files = sorted(glob.glob(os.path.join(RAW_DIR, "*_FG_preprocessed-epo.fif")))
+    for b0 in range(0, len(fif_files), CHUNK_SIZE):
+        fb_eeg, fb_lab, fb_sid = [], [], []
+        nf_eeg, nf_lab, nf_sid = [], [], []
+        for fpath in fif_files[b0:b0 + CHUNK_SIZE]:
+            exp_id = parse_exp_code(fpath)
+            row = overview.loc[overview.Exp_id == exp_id].iloc[0]
+            device = int(row.EEG_device)
+            subj   = str(row.Subject_id)
 
-    for file_path in batch_files:
-        file_name = file_path.split("/")[-1].split("_")[0]
-        exp_id = file_name[:4]
-        participants = df_info[df_info["Exp_id"] == exp_id]
-
-        if participants.empty:
-            continue
-
-        try:
-            epochs = mne.read_epochs(file_path, preload=True)
-            epochs.resample(200)
-            eeg_data = epochs.get_data()  # [trials, channels, time]
-            labels = epochs.events[:, -1]
-        except Exception as e:
-            print(f"Error loading {file_path}: {e}")
-            continue
-
-        for _, row in participants.iterrows():
-            eeg_device = row["EEG_device"]
-            valid_events = device_event_labels[eeg_device]
-            valid_idxs = [j for j, lbl in enumerate(labels) if lbl in valid_events]
-
-            if not valid_idxs:
+            epochs = mne.read_epochs(fpath, preload=True, verbose=False)
+            epochs.resample(RESAMPLE_HZ)
+            ev_ids = epochs.events[:, -1]
+            mask   = np.isin(ev_ids, list(keep_set(device)))
+            if not mask.any():
                 continue
 
-            subject_data = eeg_data[valid_idxs]
-            subject_labels = labels[valid_idxs]
+            data = epochs.get_data()[mask]                       # (N, C, T)
+            data = (data - data.mean(axis=-1, keepdims=True)) / \
+                   (data.std(axis=-1, keepdims=True) + 1e-8)
+            ev_kept = ev_ids[mask]
 
-            # Normalize
-            subject_data = (subject_data - subject_data.mean()) / subject_data.std()
+            for d, e in zip(data, ev_kept):
+                label = 0 if e in SOLO_CODES else 1              # 0 = solo, 1 = social
+                if e % 2 == 1:                                   # feedback
+                    fb_eeg.append(d);  fb_lab.append(label);  fb_sid.append(subj)
+                else:                                            # no-feedback
+                    nf_eeg.append(d);  nf_lab.append(label);  nf_sid.append(subj)
 
-            # Categorize into feedback or no-feedback streams
-            for j, lbl in enumerate(subject_labels):
-                x = subject_data[j]
+        # ---------- save one chunk ----------
+        if fb_eeg:
+            save_chunk(fb_eeg, fb_lab, fb_sid, "social_fb",  b0//CHUNK_SIZE, label_enc)
+        if nf_eeg:
+            save_chunk(nf_eeg, nf_lab, nf_sid, "social_nfb", b0//CHUNK_SIZE, label_enc)
 
-                if lbl in {301, 303, 305, 307, 309}:  # feedback
-                    label = 0 if lbl == 301 else 1  # solo vs social
-                    fb_data.append(x)
-                    fb_labels.append(label)
+def save_chunk(eeg_list, lab_list, sid_list, subfolder, idx, enc):
+    eeg  = torch.tensor(np.stack(eeg_list), dtype=torch.float32)
+    labs = torch.tensor(lab_list,          dtype=torch.long)
+    sids = torch.tensor(enc.transform(np.array(sid_list)), dtype=torch.int32)
 
-                elif lbl in {302, 304, 306, 308, 310}:  # no feedback
-                    label = 0 if lbl == 302 else 1
-                    nf_data.append(x)
-                    nf_labels.append(label)
+    t_per_patch = eeg.shape[2] // NUM_PATCHES
+    eeg = eeg.reshape(eeg.shape[0], eeg.shape[1], NUM_PATCHES, t_per_patch)
 
-    # Save feedback chunk
-    if fb_data:
-        fb_tensor = torch.tensor(np.stack(fb_data), dtype=torch.float32)
-        fb_labels_tensor = torch.tensor(fb_labels, dtype=torch.long)
-        time_per_patch = fb_tensor.shape[2] // num_patches
-        fb_tensor = fb_tensor.reshape(fb_tensor.shape[0], fb_tensor.shape[1], num_patches, time_per_patch)
-        torch.save(fb_tensor, f"processed2/social_feedback_chunk_{i//chunk_size}.pt")
-        torch.save(fb_labels_tensor, f"processed2/social_feedback_labels_{i//chunk_size}.pt")
-        print(f"Saved feedback chunk {i//chunk_size} - shape {fb_tensor.shape}")
+    base = os.path.join(OUT_DIR, subfolder, f"{subfolder}_{idx}")
+    torch.save(eeg,  f"{base}.pt")
+    torch.save(labs, f"{base}_labels.pt")
+    torch.save(sids, f"{base}_subjects.pt")
+    print(f"Saved {subfolder} chunk {idx}: EEG {tuple(eeg.shape)} | {len(labs)} labels")
 
-    # Save no-feedback chunk
-    if nf_data:
-        nf_tensor = torch.tensor(np.stack(nf_data), dtype=torch.float32)
-        nf_labels_tensor = torch.tensor(nf_labels, dtype=torch.long)
-        time_per_patch = nf_tensor.shape[2] // num_patches
-        nf_tensor = nf_tensor.reshape(nf_tensor.shape[0], nf_tensor.shape[1], num_patches, time_per_patch)
-        torch.save(nf_tensor, f"processed2/social_nofeedback_chunk_{i//chunk_size}.pt")
-        torch.save(nf_labels_tensor, f"processed2/social_nofeedback_labels_{i//chunk_size}.pt")
-        print(f"Saved no-feedback chunk {i//chunk_size} - shape {nf_tensor.shape}")
+if __name__ == "__main__":
+    main()
