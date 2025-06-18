@@ -1,107 +1,143 @@
-import os, glob, re
+import os, glob, random, pickle
 import numpy as np
 import pandas as pd
-import torch
-import mne
-from sklearn.preprocessing import LabelEncoder
-from collections import Counter
+import torch, mne, wandb, matplotlib.pyplot as plt, seaborn as sns
+from torch import nn
+from torch.utils.data import Dataset, DataLoader, Subset
+from sklearn.model_selection import GroupShuffleSplit        # key line
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
+from torcheeg.models import LaBraM
+from timm.scheduler import CosineLRScheduler
+from data import load_dataset                               # helper from data.py
+# ----------------------------------------------------------------------
 
-# ---------------- CONFIG ----------------
-RAW_DIR      = "data/PreprocessedData"
-OVERVIEW_PKL = "data/FG_overview_df_v2.pkl"
-OUT_DIR      = "processed_groupsolo"
-CHUNK_SIZE   = 4
-RESAMPLE_HZ  = 200
-NUM_PATCHES  = 6
-# ----------------------------------------
+# 1) -------------------------------------------------------------------
+#              LOAD tensors (eeg, labels, subject IDs)
+# ----------------------------------------------------------------------
+eeg_data, labels_data, subj_ids = load_dataset()
+print("EEG :",     eeg_data.shape)
+print("labels :",  labels_data.shape)
+print("subjects:", subj_ids.shape, "unique =", subj_ids.unique().numel())
 
-# Event code definitions
-event_labels = {
-    'T1P': 301, 'T1Pn': 302,     # solo
-    'T3P': 303, 'T3Pn': 304,     # triad
-    'T12P': 305, 'T12Pn': 306,   # dyads
-    'T13P': 307, 'T13Pn': 308,
-    'T23P': 309, 'T23Pn': 310
-}
+# 2) -------------------------------------------------------------------
+#              SUBJECT-LEVEL train / test split
+# ----------------------------------------------------------------------
+gss = GroupShuffleSplit(test_size=0.20, n_splits=1, random_state=42)
+train_idx, test_idx = next(gss.split(
+    np.zeros(len(labels_data)),           # dummy X
+    labels_data.numpy(),                  # y (optional)
+    groups=subj_ids.numpy()               # ← group = subject
+))
 
-solo_events  = {301, 302}
-group_events = {303, 304, 305, 306, 307, 308, 309, 310}
+print("train subjects :", np.unique(subj_ids[train_idx].numpy()).size,
+      "| test subjects :", np.unique(subj_ids[test_idx].numpy()).size)
 
-event_to_label = {}
-for name, code in event_labels.items():
-    if code in solo_events:
-        event_to_label[code] = 0
-    elif code in group_events:
-        event_to_label[code] = 1
-    else:
-        raise ValueError(f"Unmapped event: {code}")
+# 3) -------------------------------------------------------------------
+#              DataSet & DataLoader
+# ----------------------------------------------------------------------
+class EEGDataset(Dataset):
+    def __init__(self, x, y): self.x, self.y = x, y
+    def __len__(self): return len(self.y)
+    def __getitem__(self, idx): return self.x[idx], self.y[idx]
 
-def parse_exp_code(fname: str) -> str:
-    m = re.match(r"(\d{3}[A-Z])_FG", os.path.basename(fname))
-    if not m:
-        raise ValueError(f"Cannot parse subject code from {fname}")
-    return m.group(1)
+dataset      = EEGDataset(eeg_data, labels_data)
+batch_size   = 64
+train_loader = DataLoader(Subset(dataset, train_idx), batch_size=batch_size, shuffle=True)
+test_loader  = DataLoader(Subset(dataset,  test_idx), batch_size=batch_size)
 
-def main():
-    overview = pd.read_pickle(OVERVIEW_PKL)
-    fif_files = sorted(glob.glob(os.path.join(RAW_DIR, "*_FG_preprocessed-epo.fif")))
-    print("Found", len(fif_files), "FIF files")
+# 4) -------------------------------------------------------------------
+#              Model
+# ----------------------------------------------------------------------
+example_fif  = glob.glob("data/PreprocessedData/*_FG_preprocessed-epo.fif")[0]
+electrode_names = [ch.upper() for ch in mne.read_epochs(example_fif, preload=False).info["ch_names"]]
 
-    eeg_dir = os.path.join(OUT_DIR, "eeg_chunk")
-    lab_dir = os.path.join(OUT_DIR, "labels_chunk")
-    for d in (OUT_DIR, eeg_dir, lab_dir):
-        os.makedirs(d, exist_ok=True)
+device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+model  = LaBraM(in_channels=len(electrode_names), num_classes=2, drop_path=0.1).to(device)
 
-    label_enc = LabelEncoder().fit(overview["Subject_id"].astype(str).unique())
+# optional: load LaBraM base weights as before (omitted here for brevity)
 
-    for b0 in range(0, len(fif_files), CHUNK_SIZE):
-        eeg_list, lab_list, sid_list = [], [], []
-        batch_files = fif_files[b0:b0 + CHUNK_SIZE]
 
-        for fpath in batch_files:
-            exp_id = parse_exp_code(fpath)
-            row = overview.loc[overview.Exp_id == exp_id].iloc[0]
-            subj = str(row.Subject_id)
+pretrained_path = os.path.join("models", "labram-base.pth")
+if os.path.exists(pretrained_path):
+    checkpoint = torch.load(pretrained_path, map_location=device, weights_only=False)
+    print(f"found this: {checkpoint.keys()}")
+    state_dict = checkpoint["model"]
 
-            epochs = mne.read_epochs(fpath, preload=True, verbose=False)
-            epochs.resample(RESAMPLE_HZ)
+    # Remove 'student.' prefix from all keys if present
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith("student."):
+            new_state_dict[k[len("student."):]] = v
+        else:
+            new_state_dict[k] = v
 
-            ev_ids = epochs.events[:, -1]
-            keep_idx = np.isin(ev_ids, list(event_to_label.keys()))
-            if not keep_idx.any():
-                continue
+    model.load_state_dict(new_state_dict, strict=False)
+    print("Loaded pretrained model (student weights).")
 
-            kept_ids = ev_ids[keep_idx]
-            data = epochs.get_data()[keep_idx]
-            data = (data - data.mean(axis=-1, keepdims=True)) / (data.std(axis=-1, keepdims=True) + 1e-8)
+# 5) -------------------------------------------------------------------
+#              Optimiser, scheduler, loss
+# ----------------------------------------------------------------------
+base_lr = 3e-4
+num_epochs = 15
+optimizer  = torch.optim.AdamW(model.parameters(), lr=base_lr, weight_decay=0.05)
+scheduler  = CosineLRScheduler(optimizer, t_initial=10, lr_min=1e-6, warmup_lr_init=1e-5, warmup_t=2)
+criterion   = nn.CrossEntropyLoss(label_smoothing=0.0)
 
-            for x, e in zip(data, kept_ids):
-                if e not in event_to_label:
-                    raise ValueError(f"Unknown event ID: {e}")
-                eeg_list.append(x)
-                lab_list.append(event_to_label[e])
-                sid_list.append(subj)
+# 6) -------------------------------------------------------------------
+#              WandB
+# ----------------------------------------------------------------------
+wandb.init(project="Fagprojekt_eeg",
+           name="LaBraM_subject_split",
+           config={"base_lr": base_lr, "batch": batch_size, "epochs": 10,
+                   "n_subj_train": int(np.unique(subj_ids[train_idx].numpy()).size),
+                   "n_subj_test":  int(np.unique(subj_ids[test_idx].numpy()).size)})
 
-            print(f"▶ {os.path.basename(fpath)}  → {len(kept_ids)} kept events")
+# 7) -------------------------------------------------------------------
+#              Training loop
+# ----------------------------------------------------------------------
+for epoch in range(15):
+    scheduler.step(epoch)
+    model.train()
+    running = 0.0
+    for x, y in train_loader:
+        x, y = x.to(device), y.to(device)
+        optimizer.zero_grad()
+        loss = criterion(model(x, electrodes=electrode_names), y)
+        loss.backward(); optimizer.step()
+        running += loss.item()
+    wandb.log({"epoch": epoch+1, "train/loss": running/len(train_loader),
+               "train/lr": optimizer.param_groups[0]["lr"]})
+    print(f"Epoch {epoch+1}/{num_epochs} - Loss: {running/len(train_loader):.4f} - LR: {optimizer.param_groups[0]['lr']:.6f}")
 
-        if not eeg_list:
-            print("⏭️ Skipping empty chunk", b0 // CHUNK_SIZE)
-            continue
+# 8) -------------------------------------------------------------------
+#              Evaluation
+# ----------------------------------------------------------------------
+model.eval(); all_pred, all_true = [], []
+with torch.no_grad():
+    for x, y in test_loader:
+        p = model(x.to(device), electrodes=electrode_names).argmax(1).cpu()
+        all_pred.extend(p); all_true.extend(y)
 
-        eeg_tensor  = torch.tensor(np.stack(eeg_list), dtype=torch.float32)
-        lab_tensor  = torch.tensor(lab_list, dtype=torch.long)
-        sid_tensor  = torch.tensor(label_enc.transform(np.array(sid_list)), dtype=torch.int32)
+torch.save(model.state_dict(), os.path.join("models", f"EEG_model_FB_vs_NoFB.pth"))
+print("Training complete and model saved.")
+wandb.save(os.path.join("model_dir", "EEG_model_FB_vs_NoFB.pth"))
 
-        # Reshape to patches
-        t_per_patch = eeg_tensor.shape[2] // NUM_PATCHES
-        eeg_tensor = eeg_tensor.reshape(eeg_tensor.shape[0], eeg_tensor.shape[1], NUM_PATCHES, t_per_patch)
+acc = accuracy_score(all_true, all_pred)
+f1  = f1_score(all_true, all_pred)
 
-        idx = b0 // CHUNK_SIZE
-        torch.save(eeg_tensor, os.path.join(eeg_dir, f"eeg_chunk_{idx}.pt"))
-        torch.save(lab_tensor, os.path.join(lab_dir, f"labels_chunk_{idx}.pt"))
-        torch.save(sid_tensor, os.path.join(lab_dir, f"subjects_chunk_{idx}.pt"))
+wandb.log({"val/accuracy": acc, "val/f1": f1})
+cm = confusion_matrix(all_true, all_pred)
 
-        print(f"💾 Saved chunk {idx} → EEG: {tuple(eeg_tensor.shape)}, Labels: {Counter(lab_list)}")
+# log confusion matrix as an image
+fig = plt.figure(figsize=(6,5))
+sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+            xticklabels=["No FB", "FB"], yticklabels=["No FB", "FB"])
+plt.xlabel("Predicted"); plt.ylabel("True"); plt.title("Confusion")
+plt.tight_layout()
 
-if __name__ == "__main__":
-    main()
+wandb.log({"confusion_matrix": wandb.Image(fig)})
+plt.show() 
+
+print(classification_report(all_true, all_pred, target_names=["No FB", "FB"]))
+
+wandb.finish()
