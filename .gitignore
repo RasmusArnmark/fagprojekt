@@ -170,26 +170,25 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-data/
-
 .DS_store
 
-processed/
-
-models/labram-base.pth
-models/social_feedback_model.pth
-processed2/
+models/**
 *.pt
-processed/
-processed2/
+
+data/**
+!data/.gitkeep        # keep the folder, exclude contents
+
+# Ignore preprocessed training data
+experiment1/train_ready_data_exp1/**
+experiment2/train_ready_data_exp2/**
+!experiment1/train_ready_data_exp1/.gitkeep
+!experiment2/train_ready_data_exp2/.gitkeep
+
+*.pt
+
 
 wandb/
 *.wandb
-yperParameter/
-
-wandb/
-
-LaBraM-main/
 
 venv311/
 

@@ -8,7 +8,7 @@ from sklearn.model_selection import GroupShuffleSplit        # key line
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
 from torcheeg.models import LaBraM
 from timm.scheduler import CosineLRScheduler
-from data import load_dataset                               # helper from data.py
+from fagprojekt.experiment1.data_exp1 import load_dataset                               # helper from data.py
 # ----------------------------------------------------------------------
 
 # 1) -------------------------------------------------------------------
@@ -48,7 +48,7 @@ test_loader  = DataLoader(Subset(dataset,  test_idx), batch_size=batch_size)
 # 4) -------------------------------------------------------------------
 #              Model
 # ----------------------------------------------------------------------
-example_fif  = glob.glob("data/PreprocessedData/*_FG_preprocessed-epo.fif")[0]
+example_fif  = glob.glob("../data/preprocessed_data/*_FG_preprocessed-epo.fif")[0]
 electrode_names = [ch.upper() for ch in mne.read_epochs(example_fif, preload=False).info["ch_names"]]
 
 device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
@@ -57,7 +57,7 @@ model  = LaBraM(in_channels=len(electrode_names), num_classes=2, drop_path=0.1).
 # optional: load LaBraM base weights as before (omitted here for brevity)
 
 
-pretrained_path = os.path.join("models", "labram-base.pth")
+pretrained_path = os.path.join("../models", "labram-base.pth")
 if os.path.exists(pretrained_path):
     checkpoint = torch.load(pretrained_path, map_location=device, weights_only=False)
     print(f"found this: {checkpoint.keys()}")
@@ -118,7 +118,7 @@ with torch.no_grad():
         p = model(x.to(device), electrodes=electrode_names).argmax(1).cpu()
         all_pred.extend(p); all_true.extend(y)
 
-torch.save(model.state_dict(), os.path.join("models", f"EEG_model_FB_vs_NoFB.pth"))
+torch.save(model.state_dict(), os.path.join("../models", f"EEG_model_FB_vs_NoFB.pth"))
 print("Training complete and model saved.")
 wandb.save(os.path.join("model_dir", "EEG_model_FB_vs_NoFB.pth"))
 
