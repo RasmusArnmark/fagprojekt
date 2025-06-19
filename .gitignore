@@ -195,3 +195,7 @@ wandb/
 
 venv311/
 
+data/forcedf.pkl
+data/Beh_feat_df_v2.pkl
+data/FG_overview_df_v2.pkl
+data/preprocessed_data/*
