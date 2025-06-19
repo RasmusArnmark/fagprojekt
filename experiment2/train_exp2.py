@@ -13,7 +13,7 @@ from timm.scheduler import CosineLRScheduler
 # 1.  Choose condition: "fb"  or  "nfb"
 # ----------------------------------------------------------------------
 condition   = "nfb"          # <-- set "fb" or "nfb"
-data_folder = f"processed2/social_{condition}"
+data_folder = f"train_ready_data_exp2/social_{condition}"
 
 all_pt   = sorted(glob.glob(os.path.join(data_folder, f"social_{condition}_*.pt")))
 eeg_files  = [f for f in all_pt if not f.endswith(("_labels.pt", "_subjects.pt"))]
@@ -56,7 +56,7 @@ test_loader  = DataLoader(Subset(dataset,  test_idx), batch_size=batch_size)
 # ----------------------------------------------------------------------
 # 3.  Model
 # ----------------------------------------------------------------------
-example_fif  = glob.glob("data/PreprocessedData/*_FG_preprocessed-epo.fif")[0]
+example_fif  = glob.glob("../data/preprocessed_data/*_FG_preprocessed-epo.fif")[0]
 electrodes   = [ch.upper() for ch in mne.read_epochs(example_fif, preload=False).info["ch_names"]]
 
 device = (
@@ -70,7 +70,7 @@ model = LaBraM(in_channels=len(electrodes), num_classes=2, drop_path=0.1).to(dev
 # 4. Load pretrained weights
 # ----------------------------------------------------------------------
 
-pretrained_path = os.path.join("models", "labram-base.pth")
+pretrained_path = os.path.join("../models", "labram-base.pth")
 if os.path.exists(pretrained_path):
     checkpoint = torch.load(pretrained_path, map_location=device, weights_only=False)
     print(f"found this: {checkpoint.keys()}")
@@ -141,7 +141,7 @@ for epoch in range(num_epochs):
 # ----------------------------------------------------------------------
 # 8.  Final evaluation & save
 # ----------------------------------------------------------------------
-torch.save(model.state_dict(), f"models/LaBraM_solo_vs_group_{condition}.pth")
+torch.save(model.state_dict(), f"../models/LaBraM_solo_vs_group_{condition}.pth")
 wandb.save(f"models/LaBraM_solo_vs_group_{condition}.pth")
 
 cm = confusion_matrix(y_true, y_hat)
