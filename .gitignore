@@ -175,8 +175,11 @@ cython_debug/
 models/**
 *.pt
 
-data/**
-!data/.gitkeep        # keep the folder, exclude contents
+data/preprocessed_data/*
+!data/preprocessed_data/.gitkeep
+
+# (Optional) Keep other data files
+!data/**/*
 
 # Ignore preprocessed training data
 experiment1/train_ready_data_exp1/**
