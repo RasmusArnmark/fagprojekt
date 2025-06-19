@@ -175,11 +175,11 @@ cython_debug/
 models/**
 *.pt
 
-data/preprocessed_data/*
-!data/preprocessed_data/.gitkeep
+data1/preprocessed_data/*
+!data1/preprocessed_data/.gitkeep
 
 # (Optional) Keep other data files
-!data/**/*
+!data1/**/*
 
 # Ignore preprocessed training data
 experiment1/train_ready_data_exp1/**
@@ -195,7 +195,7 @@ wandb/
 
 venv311/
 
-data/forcedf.pkl
-data/Beh_feat_df_v2.pkl
-data/FG_overview_df_v2.pkl
-data/preprocessed_data/*
+data1/forcedf.pkl
+data1/Beh_feat_df_v2.pkl
+data1/FG_overview_df_v2.pkl
+data1/preprocessed_data/*
