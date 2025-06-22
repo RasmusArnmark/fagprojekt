@@ -52,7 +52,7 @@ pip install -r requirements.txt
 #### Experiment 2: Feedback vs No Feedback
 
 ```bash
-python experiment2/train_exp1.py
+python experiment2/train_exp2.py
 ```
 
 This will train the model and save it to `models/EEG_model_FB_vs_NoFB.pth`.
@@ -81,7 +81,7 @@ Evaluate a saved model on its held-out test set:
 #### Feedback vs No Feedback:
 
 ```bash
-python experiment2/evaluate_exp1.py
+python experiment2/evaluate_exp2.py
 ```
 
 #### Solo vs Group (change `condition` in script):
