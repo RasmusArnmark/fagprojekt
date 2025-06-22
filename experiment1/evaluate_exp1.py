@@ -1,109 +1,65 @@
-import torch
+import os, glob
 import numpy as np
-import glob
-import os
+import torch, mne
+from torch.utils.data import Dataset, DataLoader, Subset
+from sklearn.model_selection import GroupShuffleSplit
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
+from torcheeg.models import LaBraM
 import matplotlib.pyplot as plt
 import seaborn as sns
-import mne
-import pandas as pd
+import wandb
+from data_exp1 import load_dataset
 
-from torch.utils.data import Dataset, DataLoader
-from torcheeg.models import LaBraM
-from sklearn.metrics import confusion_matrix, classification_report
-from sklearn.model_selection import train_test_split
+# Load tensors
+eeg_data, labels_data, subj_ids = load_dataset()
 
-
-# ============================
-# Dataset Definition
-# ============================
+# Subject-level split (same seed = same split)
+gss = GroupShuffleSplit(test_size=0.20, n_splits=1, random_state=42)
+train_idx, test_idx = next(gss.split(np.zeros(len(labels_data)), labels_data.numpy(), groups=subj_ids.numpy()))
 
 class EEGDataset(Dataset):
-    def __init__(self, eeg_data, labels):
-        self.eeg_data = eeg_data
-        self.labels = labels
+    def __init__(self, x, y): self.x, self.y = x, y
+    def __len__(self): return len(self.y)
+    def __getitem__(self, idx): return self.x[idx], self.y[idx]
 
-    def __len__(self):
-        return len(self.labels)
+dataset     = EEGDataset(eeg_data, labels_data)
+test_loader = DataLoader(Subset(dataset, test_idx), batch_size=64)
 
-    def __getitem__(self, idx):
-        return self.eeg_data[idx], self.labels[idx]
+# Load model
+example_fif = glob.glob("../data/preprocessed_data/*_FG_preprocessed-epo.fif")[0]
+electrode_names = [ch.upper() for ch in mne.read_epochs(example_fif, preload=False).info["ch_names"]]
 
-# ============================
-# Load Preprocessed Data
-# ============================
+device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+model = LaBraM(in_channels=len(electrode_names), num_classes=2, drop_path=0.1).to(device)
 
-eeg_files = sorted(glob.glob("processed/eeg_chunk_*.pt"))
-label_files = sorted(glob.glob("processed/labels_chunk_*.pt"))
-
-eeg_data = torch.cat([torch.load(f) for f in eeg_files], dim=0)
-labels_data = torch.cat([torch.load(f) for f in label_files], dim=0)
-
-print(f"Loaded EEG tensor of shape {eeg_data.shape}")
-print(f"Loaded labels tensor of shape {labels_data.shape}")
-
-# ============================
-# Load Electrode Names
-# ============================
-
-example_fif = glob.glob("data/*_FG_preprocessed-epo.fif")[0]
-epochs = mne.read_epochs(example_fif, preload=False)
-electrode_names = [ch.upper() for ch in epochs.info['ch_names']]
-
-# ============================
-# Create Dataset and Dataloader (Only Test Set)
-# ============================
-
-dataset = EEGDataset(eeg_data, labels_data)
-_, test_idx = train_test_split(range(len(dataset)), test_size=0.2, stratify=labels_data, random_state=42)
-test_loader = DataLoader(torch.utils.data.Subset(dataset, test_idx), batch_size=16)
-
-# ============================
-# Load Model and Pretrained Weights
-# ============================
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = LaBraM(in_channels=len(electrode_names), num_classes=2).to(device)
-
-model_path = "models/eeg_labram_model_1st_experiment_90.pth"
-if os.path.exists(model_path):
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    print(f"Loaded pretrained model from {model_path}")
-else:
-    raise FileNotFoundError(f"Model weights not found at {model_path}")
-
+# Load trained weights
+model_path = os.path.join("../models", "EEG_model_FB_vs_NoFB.pth")
+assert os.path.exists(model_path), f"Model file not found: {model_path}"
+model.load_state_dict(torch.load(model_path, map_location=device))
 model.eval()
 
-# ============================
 # Evaluation
-# ============================
-
-all_preds, all_trues = [], []
-
+all_pred, all_true = [], []
 with torch.no_grad():
-    for inputs, labels in test_loader:
-        inputs, labels = inputs.to(device), labels.to(device)
-        outputs = model(inputs, electrodes=electrode_names)
-        _, preds = torch.max(outputs, 1)
-        all_preds.extend(preds.cpu().numpy())
-        all_trues.extend(labels.cpu().numpy())
+    for x, y in test_loader:
+        x, y = x.to(device), y.to(device)
+        p = model(x, electrodes=electrode_names).argmax(1).cpu()
+        all_pred.extend(p); all_true.extend(y)
 
-# ============================
-# Results
-# ============================
+acc = accuracy_score(all_true, all_pred)
+f1  = f1_score(all_true, all_pred)
+cm  = confusion_matrix(all_true, all_pred)
 
-cm = confusion_matrix(all_trues, all_preds)
-plt.figure(figsize=(8, 6))
+print("Accuracy :", acc)
+print("F1-score :", f1)
+print(classification_report(all_true, all_pred, target_names=["No FB", "FB"]))
+
+# Confusion matrix
+plt.figure(figsize=(6,5))
 sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
-            xticklabels=["No Feedback", "Feedback"],
-            yticklabels=["No Feedback", "Feedback"])
-plt.title("Confusion Matrix")
+            xticklabels=["No FB", "FB"], yticklabels=["No FB", "FB"])
 plt.xlabel("Predicted")
 plt.ylabel("True")
+plt.title("Confusion Matrix")
 plt.tight_layout()
 plt.show()
-
-plt.savefig("confusion_matrix.png")
-
-print("Classification Report:")
-print(classification_report(all_trues, all_preds,
-                            target_names=["No Feedback", "Feedback"]))
