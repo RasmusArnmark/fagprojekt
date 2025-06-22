@@ -13,7 +13,7 @@ from timm.scheduler import CosineLRScheduler
 # 1.  Choose condition: "fb"  or  "nfb"
 # ----------------------------------------------------------------------
 condition   = "nfb"          # <-- set "fb" or "nfb"
-data_folder = f"train_ready_data_exp2/social_{condition}"
+data_folder = f"train_ready_data_exp3/social_{condition}"
 
 all_pt   = sorted(glob.glob(os.path.join(data_folder, f"social_{condition}_*.pt")))
 eeg_files  = [f for f in all_pt if not f.endswith(("_labels.pt", "_subjects.pt"))]

@@ -8,7 +8,7 @@ from torcheeg.models import LaBraM
 import matplotlib.pyplot as plt
 import seaborn as sns
 import wandb
-from data_exp1 import load_dataset
+from data_exp2 import load_dataset
 
 # Load tensors
 eeg_data, labels_data, subj_ids = load_dataset()

@@ -8,7 +8,7 @@ from sklearn.model_selection import GroupShuffleSplit        # key line
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
 from torcheeg.models import LaBraM
 from timm.scheduler import CosineLRScheduler
-from fagprojekt.experiment1.data_exp1 import load_dataset                               # helper from data.py
+from data_exp2 import load_dataset                               # helper from data.py
 # ----------------------------------------------------------------------
 
 # 1) -------------------------------------------------------------------

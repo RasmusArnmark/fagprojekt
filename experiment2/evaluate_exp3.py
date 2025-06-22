@@ -10,7 +10,7 @@ import seaborn as sns
 
 # 1. Choose condition: "fb" or "nfb"
 condition   = "fb"
-data_folder = f"train_ready_data_exp2/social_{condition}"
+data_folder = f"train_ready_data_exp3/social_{condition}"
 
 eeg_files  = sorted([f for f in glob.glob(os.path.join(data_folder, f"social_{condition}_*.pt")) if not f.endswith(("_labels.pt", "_subjects.pt"))])
 lab_files  = sorted([f for f in glob.glob(os.path.join(data_folder, f"social_{condition}_*.pt")) if f.endswith("_labels.pt")])

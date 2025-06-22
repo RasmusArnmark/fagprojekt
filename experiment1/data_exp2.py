@@ -14,7 +14,7 @@ from typing import Tuple, List
 RAW_DIR      = "../data/preprocessed_data"
 OVERVIEW_PKL = "../data/FG_overview_df_v2.pkl"
 FORCE_PKL    = "../data/forcedf.pkl"                  # loaded but not yet used
-OUT_DIR      = "train_ready_data_exp1"
+OUT_DIR      = "train_ready_data_exp2"
 CHUNK_SIZE   = 4                                   # files per saved chunk
 RESAMPLE_HZ  = 200
 NUM_PATCHES  = 6                                   # for LaBraM window reshape
