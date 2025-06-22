@@ -9,12 +9,12 @@ This project explores the use of the LaBraM transformer-based model to classify 
 ```
 fagprojekt/
 │
-├── experiment1/
-│   ├── train_exp1.py        # Train on feedback vs. no-feedback
-│   ├── evaluate_exp1.py     # Evaluate feedback vs. no-feedback
-│   └── data_exp1.py         # Data loading helper for Experiment 1
+├── experiment2/
+│   ├── train_exp2.py        # Train on feedback vs. no-feedback
+│   ├── evaluate_exp2.py     # Evaluate feedback vs. no-feedback
+│   └── data_exp2.py         # Data loading helper for Experiment 2
 │
-├── train_ready_data_exp2/   # Preprocessed EEG .pt files for Experiment 2
+├── train_ready_data_exp3/   # Preprocessed EEG .pt files for Experiment 3
 │   └── social_fb/           # Feedback condition
 │   └── social_nfb/          # No-feedback condition
 │
@@ -24,7 +24,7 @@ fagprojekt/
 │   ├── LaBraM_solo_vs_group_fb.pth
 │   └── LaBraM_solo_vs_group_nfb.pth
 │
-├── evaluate_exp2.py         # Evaluation script for Experiment 2
+├── evaluate_exp2.py         # Evaluation script for Experiment 3
 └── README.md
 ```
 
@@ -49,27 +49,27 @@ pip install -r requirements.txt
 
 ### 2. Training
 
-#### Experiment 1: Feedback vs No Feedback
+#### Experiment 2: Feedback vs No Feedback
 
 ```bash
-python experiment1/train_exp1.py
+python experiment2/train_exp1.py
 ```
 
 This will train the model and save it to `models/EEG_model_FB_vs_NoFB.pth`.
 
-#### Experiment 2: Solo vs Group
+#### Experiment 3: Solo vs Group
 
 Edit the condition inside the training script:
 
 ```python
-# Inside train_exp2.py (currently inline in main script)
+# Inside train_exp3.py (currently inline in main script)
 condition = "nfb"  # or "fb"
 ```
 
 Then run:
 
 ```bash
-python train_exp2.py
+python train_exp3.py
 ```
 
 ---
@@ -81,13 +81,13 @@ Evaluate a saved model on its held-out test set:
 #### Feedback vs No Feedback:
 
 ```bash
-python experiment1/evaluate_exp1.py
+python experiment2/evaluate_exp1.py
 ```
 
 #### Solo vs Group (change `condition` in script):
 
 ```bash
-python evaluate_exp2.py
+python evaluate_exp3.py
 ```
 
 Make sure the corresponding model is saved at:
@@ -101,11 +101,11 @@ models/LaBraM_solo_vs_group_nfb.pth
 
 ## 📂 Data Locations
 
-- Experiment 1 expects data to be loaded from `.pt` files using the `data_exp1.py` loader.
-- Experiment 2 expects data in:
+- Experiment 2 expects data to be loaded from `.pt` files using the `data_exp2.py` loader.
+- Experiment 3 expects data in:
   ```
-  train_ready_data_exp2/social_fb/
-  train_ready_data_exp2/social_nfb/
+  train_ready_data_exp3/social_fb/
+  train_ready_data_exp3/social_nfb/
   ```
   Each folder must contain EEG tensors (`.pt`), label files (`*_labels.pt`), and subject ID files (`*_subjects.pt`).
 
