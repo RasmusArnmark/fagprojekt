@@ -30,7 +30,7 @@ fagprojekt/
 
 ---
 
-##  Running the Project
+## 🚀 Running the Project
 
 ### 1. Setup
 Ensure you have a Python environment with the following key dependencies:
@@ -122,4 +122,49 @@ Models are saved to the `/models/` folder automatically after training. Evaluati
 - Subject-level splits are used for all experiments (GroupShuffleSplit).
 - Evaluation is based on accuracy, F1-score, and confusion matrix.
 - All scripts support MPS, CUDA, or CPU depending on what's available.
+
+---
+
+For questions or suggestions, please contact the authors or create an issue.
+
+---
+
+## 🧪 Reproducing Original LaBraM Results
+
+To validate our pipeline, we include a full reproduction of the original LaBraM paper using the TUAB dataset.
+
+Navigate to the `reproduce_labram/` folder:
+
+```
+reproduce_labram/
+├── environment.yml           # Conda environment for reproducibility
+├── run_process_data_v2.sh    # Script to preprocess TUAB EEG data
+├── run_train_v2.sh           # Script to train LaBraM on TUAB
+├── models/
+│   └── labram_final_model.pth
+└── scripts/
+    ├── process_data_v2.py    # Data processing pipeline
+    └── train_v2.py           # Training pipeline for TUAB
+```
+
+### Steps to reproduce:
+1. Create the environment:
+   ```bash
+   conda env create -f reproduce_labram/environment.yml
+   conda activate labram
+   ```
+
+2. Run data preprocessing:
+   ```bash
+   bash reproduce_labram/run_process_data_v2.sh
+   ```
+
+3. Train the model:
+   ```bash
+   bash reproduce_labram/run_train_v2.sh
+   ```
+
+The model will be saved to `reproduce_labram/models/labram_final_model.pth`.
+
+This provides a sanity check for our modified experiments.
 
