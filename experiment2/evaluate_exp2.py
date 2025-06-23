@@ -13,9 +13,17 @@ from data_exp2 import load_dataset
 # Load tensors
 eeg_data, labels_data, subj_ids = load_dataset()
 
+print("EEG :",     eeg_data.shape)
+print("labels :",  labels_data.shape)
+print("subjects:", subj_ids.shape, "unique =", subj_ids.unique().numel())
+
 # Subject-level split (same seed = same split)
 gss = GroupShuffleSplit(test_size=0.20, n_splits=1, random_state=42)
-train_idx, test_idx = next(gss.split(np.zeros(len(labels_data)), labels_data.numpy(), groups=subj_ids.numpy()))
+train_idx, test_idx = next(gss.split(
+    np.zeros(len(labels_data)),
+    labels_data.cpu().numpy(),         # <- fix here
+    groups=subj_ids.cpu().numpy()      # <- and here
+))
 
 class EEGDataset(Dataset):
     def __init__(self, x, y): self.x, self.y = x, y
@@ -43,8 +51,9 @@ all_pred, all_true = [], []
 with torch.no_grad():
     for x, y in test_loader:
         x, y = x.to(device), y.to(device)
-        p = model(x, electrodes=electrode_names).argmax(1).cpu()
-        all_pred.extend(p); all_true.extend(y)
+        preds = model(x, electrodes=electrode_names).argmax(1).cpu()
+        all_pred.extend(preds)
+        all_true.extend(y.cpu())  # <- fix here
 
 acc = accuracy_score(all_true, all_pred)
 f1  = f1_score(all_true, all_pred)

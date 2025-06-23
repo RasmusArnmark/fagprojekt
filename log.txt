@@ -1,0 +1,83 @@
+8699f7b - Rasmus Arnmark, 15 minutes ago : naming
+8df3ce8 - Rasmus Arnmark, 16 minutes ago : naming
+3961f3f - RasmusArnmark, 33 minutes ago : Update README.md
+c2dabbe - RasmusArnmark, 34 minutes ago : Update README.md
+a3ab8e9 - RasmusArnmark, 38 minutes ago : Delete models/eeg_feedback_vs_no_feedback.pth
+c8ac4a6 - RasmusArnmark, 42 minutes ago : Merge pull request #10 from RasmusArnmark/RasmusArnmark
+b444c92 - RasmusArnmark, 43 minutes ago : Update README.md
+cfb7d02 - RasmusArnmark, 46 minutes ago : Merge pull request #9 from RasmusArnmark/ras
+85ccace - Rasmus Arnmark, 46 minutes ago : evaluate scripts finalized
+898a37f - Rasmus Arnmark, 53 minutes ago : hmm
+8d4a951 - philipkierkegaard, 3 days ago : Create environment.yml
+d5abc43 - philipkierkegaard, 3 days ago : Create run_process_data_v2.sh
+d3e3158 - philipkierkegaard, 3 days ago : Create run_train_v2.sh
+6cf9a4b - philipkierkegaard, 3 days ago : Add files via upload
+5c052b9 - philipkierkegaard, 3 days ago : Create __init__.py
+5c4fe6f - philipkierkegaard, 3 days ago : Create train_v2.py
+bee3aa5 - philipkierkegaard, 3 days ago : Create process_data_v2.py
+d76c84e - Rasmus Arnmark, 3 days ago : add
+03a5c27 - Rasmus Arnmark, 3 days ago : added datafolder
+7fefe6d - Rasmus Arnmark, 3 days ago : new structure
+c8bcf69 - Rasmus Arnmark, 3 days ago : new structure
+91c6167 - Rasmus Arnmark, 3 days ago : Updated structure for deliverable
+7d6c58e - Rasmus Arnmark, 4 days ago : final commit?
+acf218c - Rasmus Arnmark, 4 days ago : Updates to main, and train files
+b57fbf1 - RasmusArnmark, 2 weeks ago : Merge pull request #6 from RasmusArnmark/ras
+e96dca3 - Rasmus Arnmark, 2 weeks ago : Better solo vs group
+2ea3fb0 - RasmusArnmark, 2 weeks ago : Merge pull request #5 from RasmusArnmark/ras
+fdf5731 - Rasmus Arnmark, 2 weeks ago : Merge branch 'ras' of https://github.com/RasmusArnmark/fagprojekt into ras
+df8c660 - Rasmus Arnmark, 2 weeks ago : updates to main and train_group_solo
+e34ab19 - RasmusArnmark, 2 weeks ago : Merge pull request #4 from RasmusArnmark/ras
+581ec0a - RasmusArnmark, 2 weeks ago : Merge branch 'main' into ras
+f67cd5c - Rasmus Arnmark, 2 weeks ago : push it
+ad7372c - Bjoern, 2 weeks ago : Merge branch 'main' of https://github.com/RasmusArnmark/fagprojekt
+6d17cf5 - Bjoern, 2 weeks ago : Updated gitignore
+20ca8e4 - Bjoern, 2 weeks ago : Fixed OS issue before HPC implementation
+35a968c - Bjoern, 3 weeks ago : Cleaned up working main, added added hyperparameter definitions, updated requirements
+7ee2cfd - Bjoern, 3 weeks ago : Updated
+84ebec8 - Bjoern, 3 weeks ago : Droppet Bayes, lidt, implementeret wandb
+25b344f - RasmusArnmark, 3 weeks ago : Merge pull request #3 from RasmusArnmark/ras
+b39b8a7 - Rasmus Arnmark, 3 weeks ago : social vs non social
+6d9c83e - Bjoern, 3 weeks ago : Created basic hyperparameter tuning script
+df790e8 - Bjoern, 3 weeks ago : Pre-parametertuning, 93 accuracy
+684df01 - Bjoern, 3 weeks ago : Updated weight optimization strategy, defined potential hyperparameters
+bb397c3 - Bjoern, 3 weeks ago : made main run on all platforms + smaller debugging training loop for testing
+8a47dec - Bjoern, 3 weeks ago : Små ændringer, fixes, og cross-platform
+f444e82 - Rasmus Arnmark, 8 weeks ago : testing commits
+c766c7b - Rasmus Arnmark, 9 weeks ago : models added
+81b2d95 - Rasmus Arnmark, 9 weeks ago : it woorks
+82d4d4b - Rasmus Arnmark, 9 weeks ago : Merge branch 'main' of https://github.com/RasmusArnmark/fagprojekt
+bfe78ae - Rasmus Arnmark, 9 weeks ago : it breathes
+5194bd5 - philipkierkegaard, 9 weeks ago : Added labram-base.pth
+ea9b245 - Rasmus Arnmark, 9 weeks ago : hmm
+9aab329 - Rasmus Arnmark, 9 weeks ago : main
+0acaaa3 - philipkierkegaard, 2 months ago : add main.py
+64d4e63 - Rasmus Arnmark, 2 months ago : updated
+66957bb - philipkierkegaard, 2 months ago : Merge pull request #2 from RasmusArnmark/phil
+75a564e - philipkierkegaard, 2 months ago : Merge branch 'main' into phil
+a2e498a - philipkierkegaard, 2 months ago : gitignore
+67cd77b - philipkierkegaard, 2 months ago : Update explore.ipynb
+1937bf3 - Rasmus Arnmark, 3 months ago : with weights
+d3812a6 - Rasmus Arnmark, 3 months ago : hmm
+201d182 - philipkierkegaard, 3 months ago : Update labramtest.ipynb
+d942efa - Rasmus Arnmark, 3 months ago : added testing
+8ef7677 - Rasmus Arnmark, 3 months ago : merging
+b544d81 - Rasmus Arnmark, 3 months ago : hmm
+1198568 - Rasmus Arnmark, 3 months ago : Merge branch 'phil' of https://github.com/RasmusArnmark/fagprojekt into ras
+d24273d - Rasmus Arnmark, 3 months ago : merge
+708097a - Rasmus Arnmark, 3 months ago : ras
+0c2d145 - Rasmus Arnmark, 3 months ago : ras
+e8ea25e - philipkierkegaard, 3 months ago : Update explore.ipynb
+e60f93a - philipkierkegaard, 3 months ago : Update explore.ipynb
+7257fe3 - Rasmus Arnmark, 3 months ago : ras cooked
+80d3fc3 - Rasmus Arnmark, 3 months ago : conflicts
+cf868ea - Rasmus Arnmark, 3 months ago : testing data
+0c6971f - philipkierkegaard, 3 months ago : changes
+078483c - philipkierkegaard, 3 months ago : add
+a0a4f07 - philipkierkegaard, 3 months ago : added files
+efda089 - Rasmus Arnmark, 3 months ago : the shiiieeet
+130dcf8 - philipkierkegaard, 3 months ago : Added DS_Store to .gitignore
+496a7a0 - Rasmus Arnmark, 4 months ago : with reqs
+56f57a4 - Rasmus Arnmark, 4 months ago : start
+f779638 - Rasmus Arnmark, 4 months ago : starting out
+4795b0c - RasmusArnmark, 4 months ago : Initial commit

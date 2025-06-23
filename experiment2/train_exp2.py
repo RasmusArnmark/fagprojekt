@@ -81,7 +81,7 @@ base_lr = 3e-4
 num_epochs = 15
 optimizer  = torch.optim.AdamW(model.parameters(), lr=base_lr, weight_decay=0.05)
 scheduler  = CosineLRScheduler(optimizer, t_initial=10, lr_min=1e-6, warmup_lr_init=1e-5, warmup_t=2)
-criterion   = nn.CrossEntropyLoss(label_smoothing=0.0)
+criterion   = nn.CrossEntropyLoss(label_smoothing=0.1)
 
 # 6) -------------------------------------------------------------------
 #              WandB

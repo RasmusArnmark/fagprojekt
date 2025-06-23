@@ -50,7 +50,14 @@ batch_size   = 64
 
 train_labels = labels[train_idx]
 
-train_loader = DataLoader(Subset(dataset, train_idx), batch_size=batch_size)
+class_sample_count = torch.tensor([(train_labels == t).sum() for t in torch.unique(train_labels)])
+weights = 1. / class_sample_count.float()
+samples_weight = weights[train_labels]
+
+sampler = WeightedRandomSampler(samples_weight, num_samples=len(samples_weight), replacement=True)
+
+train_loader = DataLoader(Subset(dataset, train_idx), batch_size=batch_size, sampler=sampler)
+
 test_loader  = DataLoader(Subset(dataset,  test_idx), batch_size=batch_size)
 
 # ----------------------------------------------------------------------
@@ -97,8 +104,8 @@ optimizer  = torch.optim.AdamW(model.parameters(), lr=base_lr, weight_decay=0.05
 scheduler  = CosineLRScheduler(optimizer, t_initial=num_epochs,
                                lr_min=1e-6, warmup_lr_init=1e-5, warmup_t=3)
 
-
-criterion = nn.CrossEntropyLoss(label_smoothing=0.0) 
+class_weights = weights.to(device)
+criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
 # ----------------------------------------------------------------------
 # 6.  WandB
 # ----------------------------------------------------------------------
