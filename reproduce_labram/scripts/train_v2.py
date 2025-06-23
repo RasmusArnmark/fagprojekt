@@ -111,7 +111,7 @@ if use_fixed_constants == True:
     weight_decay = 0.05
     layer_decay = 0.65
     drop_path =  0.1
-    batch_size = 48
+    batch_size = 64
     num_epochs = 20
     warmup_epochs = 5
     scheduler_lr_min =  1e-6
